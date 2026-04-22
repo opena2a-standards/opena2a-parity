@@ -1,0 +1,16 @@
+{
+  "communityScans": 2,
+  "dependencies": {
+    "minTrustLevel": 2,
+    "totalDeps": 0,
+    "vulnerableDeps": 0
+  },
+  "found": true,
+  "name": "@modelcontextprotocol/server-filesystem",
+  "packageType": "mcp_server",
+  "scanStatus": "warnings",
+  "source": "registry",
+  "trustLevel": 3,
+  "trustScore": 0.824,
+  "verdict": "passed"
+}
