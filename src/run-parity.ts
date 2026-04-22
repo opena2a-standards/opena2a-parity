@@ -12,8 +12,12 @@ const ACTUAL_DIR = join(REPO_ROOT, "actual");
 
 type CLI = "hma" | "opena2a" | "ai-trust";
 
+type FixtureKind = "directory" | "package-name";
+
 type FixtureContract = {
   description: string;
+  kind?: FixtureKind;
+  package?: string;
   exercises: { hma?: string; opena2a?: string; "ai-trust"?: string };
   participants: CLI[];
   must_match: string[];
@@ -36,9 +40,10 @@ function envBinOrThrow(name: string): string {
   return v;
 }
 
-function runCli(invocation: string, fixtureInputDir: string): { exitCode: number; stdout: string } {
+function runCli(invocation: string, positionalArg: string | null): { exitCode: number; stdout: string } {
+  const cmd = positionalArg === null ? invocation : `${invocation} "${positionalArg}"`;
   try {
-    const stdout = execSync(`${invocation} "${fixtureInputDir}"`, {
+    const stdout = execSync(cmd, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 64 * 1024 * 1024,
@@ -150,9 +155,14 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     return 2;
   }
   const contract = parseYaml(readFileSync(contractPath, "utf8")) as FixtureContract;
+  const kind: FixtureKind = contract.kind ?? "directory";
 
-  if (!existsSync(inputDir)) {
-    console.error(`[${fixtureName}] missing input/ directory`);
+  if (kind === "directory" && !existsSync(inputDir)) {
+    console.error(`[${fixtureName}] missing input/ directory (kind=directory)`);
+    return 2;
+  }
+  if (kind === "package-name" && !contract.package) {
+    console.error(`[${fixtureName}] kind=package-name requires 'package:' field`);
     return 2;
   }
 
@@ -169,8 +179,15 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
       continue;
     }
     const bin = bins[cli];
-    const cmd = invocation.replace("{BIN}", bin);
-    const { exitCode, stdout } = runCli(cmd, inputDir);
+    let cmd = invocation.replace("{BIN}", bin);
+    let positionalArg: string | null;
+    if (kind === "package-name") {
+      cmd = cmd.replace("{PACKAGE}", contract.package!);
+      positionalArg = null;
+    } else {
+      positionalArg = inputDir;
+    }
+    const { exitCode, stdout } = runCli(cmd, positionalArg);
     let parsed: unknown;
     try {
       parsed = JSON.parse(stdout);
@@ -179,7 +196,7 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
       failures++;
       continue;
     }
-    parsed = normalize(parsed, contract.normalize ?? [], inputDir);
+    parsed = normalize(parsed, contract.normalize ?? [], kind === "directory" ? inputDir : "");
     parsed = applyIntentionalDrift(parsed, cli);
 
     const actualPath = join(ACTUAL_DIR, fixtureName, `${cli}.json`);

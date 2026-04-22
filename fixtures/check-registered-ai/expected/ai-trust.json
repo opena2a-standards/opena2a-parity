@@ -1,0 +1,118 @@
+{
+  "communityScans": 2,
+  "confidence": 0.39999999999999997,
+  "dependencies": {
+    "maxDepth": 0,
+    "minTrustLevel": 2,
+    "minTrustScore": 1,
+    "totalDeps": 0,
+    "vulnerableDeps": 0
+  },
+  "factors": {
+    "behavioralVerification": 0.5,
+    "dependencyHealth": 0.5,
+    "platformValidation": 0.9600000000000001,
+    "publisherVerification": 0.4,
+    "securityScan": 0.9,
+    "signatureIntegrity": 0.5,
+    "slsaProvenance": 0.5
+  },
+  "found": true,
+  "name": "@modelcontextprotocol/server-filesystem",
+  "packageId": "7b70f85f-d988-4fbf-8d5e-993ce58ed10c",
+  "packageType": "mcp_server",
+  "platformSignals": {
+    "contributorCount": 0,
+    "githubForks": 9927,
+    "githubStars": 81235,
+    "hasDescription": true,
+    "hasDocs": false,
+    "hasLicense": true,
+    "lastCommit": "2026-03-15T17:09:04Z",
+    "maintenanceScore": 0,
+    "weeklyDownloads": 496672
+  },
+  "scanStatus": "warnings",
+  "scoreBreakdown": [
+    {
+      "contribution": 0.06,
+      "factor": "publisherVerification",
+      "reason": "",
+      "score": 0.4,
+      "weight": 0.15
+    },
+    {
+      "contribution": 0.015,
+      "factor": "slsaProvenance",
+      "reason": "",
+      "score": 0.5,
+      "weight": 0.03
+    },
+    {
+      "contribution": 0.27,
+      "factor": "securityScan",
+      "reason": "",
+      "score": 0.9,
+      "weight": 0.3
+    },
+    {
+      "contribution": 0.28800000000000003,
+      "factor": "platformValidation",
+      "reason": "",
+      "score": 0.9600000000000001,
+      "weight": 0.3
+    },
+    {
+      "contribution": 0.025,
+      "factor": "behavioralVerification",
+      "reason": "",
+      "score": 0.5,
+      "weight": 0.05
+    },
+    {
+      "contribution": 0.01,
+      "factor": "signatureIntegrity",
+      "reason": "",
+      "score": 0.5,
+      "weight": 0.02
+    },
+    {
+      "contribution": 0.075,
+      "factor": "dependencyHealth",
+      "reason": "",
+      "score": 0.5,
+      "weight": 0.15
+    }
+  ],
+  "scoringVersion": "v3",
+  "securityProfile": {
+    "contentHash": "4efbf2e44f806026",
+    "criticalCount": 0,
+    "declaredCaps": [],
+    "hasDrift": false,
+    "hasSignature": false,
+    "highCount": 1,
+    "id": "e9506df6-8692-4c2e-9a91-d0c404c044dc",
+    "knownCves": [],
+    "minDepTrust": 2,
+    "observedCaps": [],
+    "packageId": "7b70f85f-d988-4fbf-8d5e-993ce58ed10c",
+    "profileVersion": 1,
+    "slsaLevel": 0,
+    "transitiveDeps": 0,
+    "trustFactors": {
+      "hasSignature": false,
+      "observationDays": 0,
+      "scanStatus": "warnings",
+      "slsaLevel": 0,
+      "violations": 0
+    },
+    "trustLevel": 2,
+    "trustScore": 0.5,
+    "versionId": "7e67e8ff-c97a-4746-9b34-bccd4a18060f",
+    "vulnerableDeps": 0
+  },
+  "trustLevel": 3,
+  "trustScore": 0.824,
+  "verdict": "passed"
+}

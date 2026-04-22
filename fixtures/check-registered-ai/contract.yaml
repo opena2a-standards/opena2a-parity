@@ -1,0 +1,67 @@
+description: >
+  Trust-level parity on a known Tier-1 registered MCP server. The Registry
+  returns a single canonical trust level; each CLI must expose it identically
+  via its JSON output. Closes F1 from briefs/check-command-divergence.md.
+kind: package-name
+package: "@modelcontextprotocol/server-filesystem"
+
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+  ai-trust: "{BIN} check {PACKAGE} --no-scan --json"
+  # opena2a `check --json` falls through to local-scan today and does not
+  # surface trustLevel in its JSON output. That is a render-layer bug tracked
+  # in briefs/check-command-divergence.md §F2 and closes in M2 (cli-ui 0.3.0
+  # renderCheckBlock). Left as a .skip sentinel until M2 lands.
+
+participants:
+  - hma
+  - ai-trust
+
+# Fields that must be byte-identical across participating CLIs. Narrow on
+# purpose — the point of M1 is to unify the trust-level string; richer
+# multi-field parity arrives with M2 (cli-ui renderCheckBlock) and M3
+# (check-core output schema).
+must_match:
+  - trustLevel
+  - name
+
+may_differ:
+  - path: trustScore
+    reason: "Registry may tick 0.01 between back-to-back queries as new scans land; compare coarse level, not score."
+  - path: lastScannedAt
+    reason: "Server-side scan-completion timestamp; normalized out."
+  - path: packageId
+    reason: "ai-trust surfaces packageId, hma's TrustAnswer subset does not."
+  - path: confidence
+    reason: "ai-trust surfaces confidence, hma's TrustAnswer subset does not."
+  - path: communityScans
+    reason: "Updated on every new community scan; not a trust-level determinant."
+  - path: scanStatus
+    reason: "Expected to match (both saw 'warnings'), but tolerated as may_differ during M1 — registry-level value is the must_match subject."
+  - path: verdict
+    reason: "Expected to match ('passed'), but tolerated as may_differ during M1; M2 render layer locks it."
+  - path: packageType
+    reason: "Expected to match ('mcp_server'), tolerated during M1."
+  - path: source
+    reason: "hma emits 'source: registry' to distinguish from local-scan; ai-trust does not."
+  - path: found
+    reason: "Both compute this client-side; deterministic but not contractual in M1."
+  - path: dependencies
+    reason: "Structure differs slightly between CLIs; M2 render surface unifies."
+  - path: securityProfile
+    reason: "ai-trust surfaces full securityProfile; hma doesn't. Render-surface concern for M2."
+  - path: factors
+    reason: "ai-trust-only detail — scoring breakdown."
+  - path: scoreBreakdown
+    reason: "ai-trust-only detail — per-factor contributions."
+  - path: platformSignals
+    reason: "ai-trust-only — GitHub stars, downloads, etc."
+  - path: scoringVersion
+    reason: "ai-trust-only."
+
+normalize:
+  - kind: strip_key
+    path: lastScannedAt
+  - kind: replace_regex
+    pattern: "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z"
+    replacement: "<ISO_TIMESTAMP>"
