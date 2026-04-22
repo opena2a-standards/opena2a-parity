@@ -1,0 +1,9 @@
+{"timestamp":"2026-03-11T05:21:51.073Z","plugin":"credvault","action":"scan.complete","target":"/Users/ecolibria/workspace/opena2a-org/test/hma","result":"denied","metadata":{"findingsCount":12}}
+{"timestamp":"2026-03-11T05:21:51.074Z","plugin":"credvault","action":"scan.complete","target":"/Users/ecolibria/workspace/opena2a-org/test/hma","result":"denied","metadata":{"findingsCount":12}}
+{"timestamp":"2026-03-11T05:21:51.078Z","plugin":"credvault","action":"fix.applied","target":"CRED-001","result":"allowed","metadata":{"filesModified":["config.json","config.yaml",".env",".env.local","mcp.json","CLAUDE.md",".openclaw/config.json","openclaw.json",".env.example"]}}
+{"timestamp":"2026-03-11T05:21:51.079Z","plugin":"signcrypt","action":"scan.complete","target":"/Users/ecolibria/workspace/opena2a-org/test/hma","result":"denied","metadata":{"findingsCount":5}}
+{"timestamp":"2026-03-11T05:21:51.079Z","plugin":"signcrypt","action":"scan.complete","target":"/Users/ecolibria/workspace/opena2a-org/test/hma","result":"denied","metadata":{"findingsCount":5}}
+{"timestamp":"2026-03-11T05:21:51.092Z","plugin":"signcrypt","action":"fix.applied","target":"/Users/ecolibria/workspace/opena2a-org/test/hma","result":"allowed","metadata":{"signedFiles":5}}
+{"timestamp":"2026-03-11T05:21:51.093Z","plugin":"skillguard","action":"scan.complete","target":"/Users/ecolibria/workspace/opena2a-org/test/hma","result":"denied","metadata":{"findingsCount":15,"skillsScanned":3}}
+{"timestamp":"2026-03-11T05:21:51.094Z","plugin":"skillguard","action":"scan.complete","target":"/Users/ecolibria/workspace/opena2a-org/test/hma","result":"denied","metadata":{"findingsCount":15,"skillsScanned":3}}
+{"timestamp":"2026-03-11T05:21:51.094Z","plugin":"skillguard","action":"fix.applied","target":"/Users/ecolibria/workspace/opena2a-org/test/hma","result":"allowed","metadata":{"pinnedSkills":3}}

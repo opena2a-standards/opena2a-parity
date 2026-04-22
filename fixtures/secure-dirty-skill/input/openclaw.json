@@ -1,0 +1,18 @@
+{
+  "agent": {
+    "name": "vulnerable-openclaw-agent",
+    "approval_mode": "auto",
+    "sandbox": false
+  },
+  "credentials": {
+    "api_key": "${ANTHROPIC_API_KEY}"
+  },
+  "gateway": {
+    "routes": [
+      {"path": "/api/*", "target": "http://backend:3000"},
+      {"path": "/admin/*", "target": "http://internal:8080"}
+    ],
+    "auth": false,
+    "rate_limit": false
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "version": "0.8.0",
+  "agent": {
+    "name": "my-openclaw-agent",
+    "approval_mode": "auto",
+    "sandbox_mode": false
+  },
+  "secrets": {
+    "api_key": "${ANTHROPIC_API_KEY}",
+    "webhook_secret": "whsec_FAKE_WEBHOOK_SECRET_xxxxxxxxx"
+  },
+  "skills": {
+    "auto_install": true,
+    "allow_unsigned": true
+  }
+}

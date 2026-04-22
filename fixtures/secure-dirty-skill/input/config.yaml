@@ -1,0 +1,13 @@
+database:
+  url: "postgres://admin:password123@db.example.com:5432/production"
+  redis: "redis://:secret_redis_pass@cache.example.com:6379"
+  mongodb: "mongodb://root:mongopass@mongo.example.com:27017/admin"
+
+api:
+  anthropic_key: "${ANTHROPIC_API_KEY}"
+  jwt_secret: "my-super-secret-jwt-signing-key-hardcoded"
+
+logging:
+  level: debug
+  log_credentials: true
+  output: /var/log/agent.log

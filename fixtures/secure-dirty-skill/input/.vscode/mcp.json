@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users"],
+      "env": {
+        "OPENAI_KEY": "sk-proj-FAKE-VSCODE-KEY-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    }
+  }
+}

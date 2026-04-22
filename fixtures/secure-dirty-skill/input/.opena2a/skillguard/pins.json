@@ -1,0 +1,20 @@
+[
+  {
+    "skillName": "SKILL",
+    "hash": "ca04e23b1cbf39257edbcb736513cb617af353461336cc7f4cd1d512d4baa605",
+    "pinnedAt": "2026-03-11T05:21:51.094Z",
+    "filePath": "SKILL.md"
+  },
+  {
+    "skillName": "analytics",
+    "hash": "73ca3374f46e5358aaf1119c6edc3d2dc8160af0421841d64a4977ed0e98192d",
+    "pinnedAt": "2026-03-11T05:21:51.094Z",
+    "filePath": "analytics.skill.md"
+  },
+  {
+    "skillName": "deploy",
+    "hash": "b4298d36545b15472f0dce7c8b7eac187c186fc840b6234f21bf503c11d449ad",
+    "pinnedAt": "2026-03-11T05:21:51.094Z",
+    "filePath": "deploy.skill.md"
+  }
+]

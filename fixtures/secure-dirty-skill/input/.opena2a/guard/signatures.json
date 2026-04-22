@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "signatures": [
+    {
+      "filePath": "mcp.json",
+      "hash": "sha256:57365c927c9a06a122d6e7461fd002f33dbec24f89daed8725aec9c6dad55f6b",
+      "signedAt": "2026-04-03T01:24:13.607Z",
+      "signedBy": "ecolibria@opena2a-cli",
+      "fileSize": 949
+    },
+    {
+      "filePath": ".claude/settings.json",
+      "hash": "sha256:e422fa17d9ccff3df6999de424ce99b23de620ecbe14f6b39f4d1a9f81483d7c",
+      "signedAt": "2026-04-03T01:24:13.608Z",
+      "signedBy": "ecolibria@opena2a-cli",
+      "fileSize": 272
+    },
+    {
+      "filePath": "package.json",
+      "hash": "sha256:200eca8af9a8222b5458a9dff2ea57a0c25b24b046fe05bd7fab780a03d3d560",
+      "signedAt": "2026-04-03T01:24:13.608Z",
+      "signedBy": "ecolibria@opena2a-cli",
+      "fileSize": 401
+    },
+    {
+      "filePath": "openclaw.json",
+      "hash": "sha256:07bed1ed3b83d0da270d9aafe987315a7597912692797d8ac2bc2f192f0a67ed",
+      "signedAt": "2026-04-03T01:24:13.608Z",
+      "signedBy": "ecolibria@opena2a-cli",
+      "fileSize": 380
+    },
+    {
+      "filePath": ".openclaw/config.json",
+      "hash": "sha256:8e0e457df4c26d8373a3d4dd5435402c9b35d5256850f162b3ae3244e25f2fd6",
+      "signedAt": "2026-04-03T01:24:13.608Z",
+      "signedBy": "ecolibria@opena2a-cli",
+      "fileSize": 322
+    },
+    {
+      "filePath": "Dockerfile",
+      "hash": "sha256:2265c0b0a8a056d0f2d10337d88492706dfa2d83699713a04728eebf8555a113",
+      "signedAt": "2026-04-03T01:24:13.608Z",
+      "signedBy": "ecolibria@opena2a-cli",
+      "fileSize": 91
+    },
+    {
+      "filePath": "docker-compose.yml",
+      "hash": "sha256:5df7d27d6c78d2e8f4e1d09faa5013e7f118403042ef47cd2ba993de536f0e2e",
+      "signedAt": "2026-04-03T01:24:13.608Z",
+      "signedBy": "ecolibria@opena2a-cli",
+      "fileSize": 134
+    }
+  ],
+  "updatedAt": "2026-04-03T01:24:13.608Z"
+}

@@ -1,0 +1,24 @@
+name: multi-agent-orchestrator
+version: 1.0.0
+
+agents:
+  - name: researcher
+    role: Find information online
+    tools: [web-search, web-fetch]
+  - name: coder
+    role: Write and execute code
+    tools: [filesystem, shell, execute]
+  - name: deployer
+    role: Deploy to production
+    tools: [docker, kubernetes, aws]
+
+orchestration:
+  coordinator: main-agent
+  delegation: automatic
+  max_iterations: 100
+  timeout: none
+  budget_limit: none
+
+trust:
+  agent_to_agent: implicit
+  verification: none

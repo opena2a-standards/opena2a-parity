@@ -1,0 +1,11 @@
+node_modules/
+*.log
+.DS_Store
+/actual/
+/tmp-checkouts/
+# Claude working state (repo root only; fixtures may legitimately include these as test inputs)
+/.claude/
+/CLAUDE.md
+/.cursorrules
+/.aider*
+/.copilot/

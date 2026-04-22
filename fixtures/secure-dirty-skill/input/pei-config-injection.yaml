@@ -1,0 +1,30 @@
+# PEI-002 Test Fixture: Config file with no integrity protection
+#
+# Intentionally vulnerable: writable policy config with no hash/signature.
+# HMA PEI-002 should flag this as an injection surface.
+
+name: agent-policy
+version: "1.0"
+enforcement:
+  mode: strict
+  failOpen: false
+  # No integrity hash, no signature, no read-only flag
+  # Any process with file access can modify this
+
+rules:
+  - action: DENY
+    resource: "system_prompt"
+    operation: "modify"
+  - action: DENY
+    resource: "credentials"
+    operation: "read"
+  - action: ALLOW
+    resource: "*"
+    operation: "read"
+
+# VULNERABLE: policy_override field accepted without validation
+policy_override: false
+
+# VULNERABLE: no integrity verification
+# integrity_hash: null
+# signature: null

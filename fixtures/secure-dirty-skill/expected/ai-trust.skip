@@ -1,0 +1,1 @@
+ai-trust check takes a package name, not a directory. Dir-scan fixtures are HMA/opena2a-only. Three-way parity lands with check-* fixtures.

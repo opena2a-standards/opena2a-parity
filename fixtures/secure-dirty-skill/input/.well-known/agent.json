@@ -1,0 +1,6 @@
+{
+  "name": "test-agent",
+  "description": "A test agent",
+  "capabilities": ["text-generation", "tool-use"],
+  "url": "https://example.com/tasks/send"
+}

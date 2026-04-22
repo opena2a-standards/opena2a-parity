@@ -1,0 +1,45 @@
+description: >
+  Directory-scan parity on a known-dirty skill directory. Exercises HMA and
+  opena2a's scan passthrough. ai-trust is skipped: its `check` command takes a
+  package name, not a directory.
+
+exercises:
+  hma: "{BIN} secure --format json"
+  opena2a: "{BIN} scan --format json"
+
+participants:
+  - hma
+  - opena2a
+
+# Fields that must be byte-identical across participating CLIs.
+# Intentionally narrow for M0 — tightens as shared extraction (M3/M4) closes
+# the known delegation drift. Today opena2a scan reports more findings than
+# hma secure on the same input (matches 2026-04-22 memory on opena2a hygiene
+# overlay); that drift is tracked, not yet closed.
+must_match:
+  - platform
+  - projectType
+  - score
+  - maxScore
+
+# Fields allowed to vary or have noise normalized out before compare.
+may_differ:
+  - path: timestamp
+    reason: "Wall-clock timestamps cannot match across runs. Normalized to empty string."
+  - path: findings
+    reason: "Known drift: opena2a scan emits ~2x findings vs hma secure on same input (2026-04-22). Tracked for M3/M4 check-core extraction; not a current parity violation."
+  - path: allFindings
+    reason: "Same as findings. Tracked for M3/M4."
+  - path: semanticAnalysis
+    reason: "NanoMind probabilistic output excluded from parity gate per cli-consolidation.md line 103 (parity covers deterministic core only)."
+
+# Normalization applied before diff. Order matters.
+normalize:
+  - kind: replace_regex
+    pattern: "{FIXTURE_INPUT_DIR}"
+    replacement: "<FIXTURE_INPUT_DIR>"
+  - kind: replace_regex
+    pattern: "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z"
+    replacement: "<ISO_TIMESTAMP>"
+  - kind: strip_key
+    path: timestamp

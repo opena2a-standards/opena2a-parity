@@ -1,0 +1,110 @@
+name: parity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+    inputs:
+      hma_ref:
+        description: "hackmyagent git ref to build and test"
+        type: string
+        default: "main"
+      opena2a_ref:
+        description: "opena2a git ref to build and test"
+        type: string
+        default: "main"
+      ai_trust_ref:
+        description: "ai-trust git ref to build and test"
+        type: string
+        default: "main"
+
+concurrency:
+  group: parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout opena2a-parity
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install harness deps
+        run: npm ci || npm install
+
+      - name: Checkout hackmyagent
+        uses: actions/checkout@v4
+        with:
+          repository: opena2a-org/hackmyagent
+          ref: ${{ inputs.hma_ref || 'main' }}
+          path: ext/hackmyagent
+
+      - name: Checkout opena2a
+        uses: actions/checkout@v4
+        with:
+          repository: opena2a-org/opena2a
+          ref: ${{ inputs.opena2a_ref || 'main' }}
+          path: ext/opena2a
+
+      - name: Checkout ai-trust
+        uses: actions/checkout@v4
+        with:
+          repository: opena2a-org/ai-trust
+          ref: ${{ inputs.ai_trust_ref || 'main' }}
+          path: ext/ai-trust
+
+      - name: Build hackmyagent
+        working-directory: ext/hackmyagent
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Build opena2a
+        working-directory: ext/opena2a
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Build ai-trust
+        working-directory: ext/ai-trust
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Run parity harness
+        env:
+          HMA_BIN: "node ${{ github.workspace }}/ext/hackmyagent/dist/cli.js"
+          OPENA2A_BIN: "node ${{ github.workspace }}/ext/opena2a/packages/cli/dist/index.js"
+          AI_TRUST_BIN: "node ${{ github.workspace }}/ext/ai-trust/dist/index.js"
+        run: npm run parity
+
+      - name: Run intentional-drift self-test
+        env:
+          HMA_BIN: "node ${{ github.workspace }}/ext/hackmyagent/dist/cli.js"
+          OPENA2A_BIN: "node ${{ github.workspace }}/ext/opena2a/packages/cli/dist/index.js"
+          AI_TRUST_BIN: "node ${{ github.workspace }}/ext/ai-trust/dist/index.js"
+        run: |
+          set +e
+          npm run parity:drift-demo
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "Self-test FAILED: drift mode returned exit 0 — gate is not actually catching drift."
+            exit 1
+          fi
+          echo "Self-test OK: drift mode exited $rc as expected."
+
+      - name: Upload actual/ on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-actual
+          path: actual/
+          retention-days: 7

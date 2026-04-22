@@ -1,0 +1,22 @@
+{
+  "name": "opena2a-parity",
+  "version": "0.1.0-pre",
+  "private": true,
+  "description": "Cross-CLI parity gate for the opena2a-org CLI fleet (hackmyagent, opena2a, ai-trust).",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "parity": "node --experimental-strip-types src/run-parity.ts",
+    "parity:drift-demo": "INTENTIONAL_DRIFT=1 node --experimental-strip-types src/run-parity.ts"
+  },
+  "dependencies": {
+    "yaml": "2.5.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opena2a-org/opena2a-parity.git"
+  },
+  "license": "MIT"
+}

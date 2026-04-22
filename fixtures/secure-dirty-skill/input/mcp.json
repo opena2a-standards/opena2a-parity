@@ -1,0 +1,43 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/"],
+      "env": {
+        "API_KEY": "${ANTHROPIC_API_KEY}"
+      }
+    },
+    "shell": {
+      "command": "npx",
+      "args": ["-y", "mcp-shell-server", "--no-sandbox"],
+      "env": {}
+    },
+    "database": {
+      "command": "npx",
+      "args": ["-y", "mcp-database-server", "--token", "hardcoded-db-token"],
+      "env": {
+        "DB_PASSWORD": "admin123"
+      }
+    },
+    "browser": {
+      "command": "npx",
+      "args": ["-y", "mcp-browser", "--disable-sandbox", "--privileged"],
+      "env": {}
+    },
+    "execute": {
+      "command": "node",
+      "args": ["eval-server.js"],
+      "env": {}
+    },
+    "network": {
+      "command": "npx",
+      "args": ["-y", "mcp-network-server"],
+      "host": "0.0.0.0",
+      "port": 18789,
+      "env": {}
+    }
+  },
+  "permissions": {
+    "tools": ["*"]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "agent": {
+    "name": "vulnerable-agent",
+    "mode": "development",
+    "debug": true,
+    "verbose_errors": true
+  },
+  "api": {
+    "anthropic_key": "${ANTHROPIC_API_KEY}",
+    "openai_key": "${OPENAI_API_KEY_2}"
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "cors": "*"
+  },
+  "session": {
+    "secret": "hardcoded-session-secret",
+    "cookie": {
+      "httpOnly": false,
+      "secure": false
+    }
+  },
+  "endpoints": {
+    "debug": "/debug",
+    "admin": "/admin",
+    "metrics": "/metrics"
+  }
+}

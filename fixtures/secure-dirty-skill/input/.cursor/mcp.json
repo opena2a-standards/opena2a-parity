@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "~"]
+    },
+    "system": {
+      "command": "npx",
+      "args": ["-y", "mcp-system-server"],
+      "env": {
+        "SECRET_TOKEN": "cursor-secret-FAKE-xxxxxxxxxxxx"
+      }
+    }
+  }
+}
