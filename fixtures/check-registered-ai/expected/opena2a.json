@@ -1,0 +1,16 @@
+{
+  "communityScans": 2,
+  "findings": [],
+  "lastScannedAt": "2026-03-02T00:46:00.496394Z",
+  "maxScore": 100,
+  "name": "@modelcontextprotocol/server-filesystem",
+  "packageType": "mcp_server",
+  "projectType": "mcp",
+  "scanStatus": "warnings",
+  "score": 100,
+  "source": "local-scan",
+  "trustLevel": 3,
+  "trustScore": 0.824,
+  "type": "npm-package",
+  "verdict": "passed"
+}

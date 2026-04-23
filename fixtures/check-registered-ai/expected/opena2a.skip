@@ -1,1 +1,0 @@
-opena2a check --json currently returns local-scan output without trustLevel; render-layer fix lands in M2 (cli-ui 0.3.0 renderCheckBlock). Tracked in briefs/check-command-divergence.md §F2. Re-enable participant once M2 ships.
