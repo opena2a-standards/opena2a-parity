@@ -8,22 +8,30 @@ package: "@modelcontextprotocol/server-filesystem"
 exercises:
   hma: "{BIN} check {PACKAGE} --no-scan --json"
   ai-trust: "{BIN} check {PACKAGE} --no-scan --json"
-  # opena2a `check --json` falls through to local-scan today and does not
-  # surface trustLevel in its JSON output. That is a render-layer bug tracked
-  # in briefs/check-command-divergence.md §F2 and closes in M2 (cli-ui 0.3.0
-  # renderCheckBlock). Left as a .skip sentinel until M2 lands.
+  # opena2a-cli spawn-delegates `check` to hackmyagent. It doesn't cleanly
+  # accept `--no-scan` passthrough (commander arity on the `check [target]`
+  # argument), so the parity exercise runs the default local-scan path via
+  # `--format json`. Since hackmyagent >=0.18.3 emits registry fields at
+  # top level on the local-scan path too (F1 fix), the must_match fields
+  # still agree across all three CLIs.
+  opena2a: "{BIN} check {PACKAGE} --format json"
 
 participants:
   - hma
   - ai-trust
+  - opena2a
 
-# Fields that must be byte-identical across participating CLIs. Narrow on
-# purpose — the point of M1 is to unify the trust-level string; richer
-# multi-field parity arrives with M2 (cli-ui renderCheckBlock) and M3
-# (check-core output schema).
+# Fields that must be byte-identical across participating CLIs. Expanded in
+# M2 Day-2 now that hackmyagent >=0.18.3 surfaces registry fields on the
+# default local-scan path — opena2a (which delegates to hackmyagent) inherits
+# the same shape. Richer parity (full render-layer byte equality) arrives
+# with M3 (check-core output schema).
 must_match:
   - trustLevel
   - name
+  - verdict
+  - packageType
+  - scanStatus
 
 may_differ:
   - path: trustScore
@@ -36,20 +44,14 @@ may_differ:
     reason: "ai-trust surfaces confidence, hma's TrustAnswer subset does not."
   - path: communityScans
     reason: "Updated on every new community scan; not a trust-level determinant."
-  - path: scanStatus
-    reason: "Expected to match (both saw 'warnings'), but tolerated as may_differ during M1 — registry-level value is the must_match subject."
-  - path: verdict
-    reason: "Expected to match ('passed'), but tolerated as may_differ during M1; M2 render layer locks it."
-  - path: packageType
-    reason: "Expected to match ('mcp_server'), tolerated during M1."
   - path: source
-    reason: "hma emits 'source: registry' to distinguish from local-scan; ai-trust does not."
+    reason: "hma emits 'source: registry' on --no-scan, 'source: local-scan' on default; opena2a always shows local-scan via delegation. ai-trust doesn't emit this field."
   - path: found
-    reason: "Both compute this client-side; deterministic but not contractual in M1."
+    reason: "Both compute this client-side; deterministic but not contractual in M2."
   - path: dependencies
-    reason: "Structure differs slightly between CLIs; M2 render surface unifies."
+    reason: "Structure differs slightly between CLIs; M3 render surface unifies."
   - path: securityProfile
-    reason: "ai-trust surfaces full securityProfile; hma doesn't. Render-surface concern for M2."
+    reason: "ai-trust surfaces full securityProfile; hma doesn't. Render-surface concern for M3."
   - path: factors
     reason: "ai-trust-only detail — scoring breakdown."
   - path: scoreBreakdown
@@ -58,6 +60,18 @@ may_differ:
     reason: "ai-trust-only — GitHub stars, downloads, etc."
   - path: scoringVersion
     reason: "ai-trust-only."
+  - path: type
+    reason: "opena2a/hma local-scan-path field ('npm-package'/'pypi-package'/'github-repo'); ai-trust and hma --no-scan path don't emit it."
+  - path: projectType
+    reason: "opena2a/hma local-scan-path field from the scanner; ai-trust and hma --no-scan path don't emit it."
+  - path: score
+    reason: "Local-scan security score (0-100); only present on scan paths."
+  - path: maxScore
+    reason: "Local-scan max possible score; only present on scan paths."
+  - path: findings
+    reason: "Local-scan finding list; only present on scan paths."
+  - path: cveCount
+    reason: "Registry field emitted only when >0; availability differs."
 
 normalize:
   - kind: strip_key
