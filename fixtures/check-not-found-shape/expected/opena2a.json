@@ -1,0 +1,6 @@
+{
+  "ecosystem": "npm",
+  "error": "Package \"opena2a-parity-f2-nonexistent-pkg-xyz789\" not found on npm.",
+  "found": false,
+  "name": "opena2a-parity-f2-nonexistent-pkg-xyz789"
+}

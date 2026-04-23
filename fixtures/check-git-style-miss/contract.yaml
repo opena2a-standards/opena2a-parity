@@ -1,0 +1,37 @@
+description: >
+  Not-found JSON shape parity on a git-style target (`user/repo`) that is not
+  a real GitHub repo. HMA detects the github ecosystem via the `user/repo`
+  classifier and emits NotFoundOutput with `ecosystem: github` + `errorHint`.
+  opena2a-cli inherits the same shape via spawn delegation. Closes F3 from
+  briefs/check-command-divergence.md.
+
+  ai-trust is skipped here: v0.5.x has no github-ecosystem classifier and
+  treats `user/repo` as an npm package name, emitting `ecosystem: npm`. That's
+  a pre-existing product gap — rolling it in would conflate round-2 scope
+  with a larger `ai-trust` feature. Tracked as a future fixture when the
+  classifier lands.
+
+kind: package-name
+package: "anthropic/code-review"
+
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+  opena2a: "{BIN} check {PACKAGE} --format json"
+
+participants:
+  - hma
+  - opena2a
+
+must_match:
+  - name
+  - found
+  - ecosystem
+  - errorHint
+
+may_differ:
+  - path: error
+    reason: "CLI-specific wording — same `Repository \"<pkg>\" not found on GitHub.` today, but framed as may_differ so a later wording tweak on one side doesn't fail the gate."
+  - path: suggestions
+    reason: "Reserved for future `did you mean @anthropic/code-review?` completion; not emitted on the current git-style miss path."
+
+normalize: []

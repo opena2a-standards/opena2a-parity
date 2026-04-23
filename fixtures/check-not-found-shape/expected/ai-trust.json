@@ -1,0 +1,10 @@
+{
+  "ecosystem": "npm",
+  "error": "Package \"opena2a-parity-f2-nonexistent-pkg-xyz789\" not found in the OpenA2A Registry.",
+  "found": false,
+  "name": "opena2a-parity-f2-nonexistent-pkg-xyz789",
+  "nextSteps": [
+    "ai-trust check opena2a-parity-f2-nonexistent-pkg-xyz789 --scan-if-missing",
+    "npx hackmyagent secure <project-dir>"
+  ]
+}

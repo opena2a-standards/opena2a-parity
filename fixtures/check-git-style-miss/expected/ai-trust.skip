@@ -1,0 +1,1 @@
+ai-trust v0.5.x has no github-ecosystem classifier — treats `user/repo` as an npm package name. Adding github detection is a separate feature, tracked for a future round.

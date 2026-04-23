@@ -1,0 +1,44 @@
+description: >
+  Not-found JSON shape parity on a bare package name that is not on npm. All
+  three CLIs must emit the canonical NotFoundOutput shape from
+  `@opena2a/check-core` (name, found: false, ecosystem). Closes F2 from
+  briefs/check-command-divergence.md and briefs/check-core-adoption-round2-not-found.md.
+
+kind: package-name
+package: "opena2a-parity-f2-nonexistent-pkg-xyz789"
+
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+  ai-trust: "{BIN} check {PACKAGE} --no-scan --json"
+  # opena2a-cli spawn-delegates check to hackmyagent. Commander doesn't cleanly
+  # accept arbitrary flag passthrough on the `check [target]` argument, so we
+  # use the same --format json pattern as F1. Since HMA's bare-name reclass
+  # (0.19.1) emits NotFoundOutput for the npm-miss path, opena2a inherits the
+  # same shape via delegation.
+  opena2a: "{BIN} check {PACKAGE} --format json"
+
+participants:
+  - hma
+  - ai-trust
+  - opena2a
+
+# Byte-identical across participating CLIs. Locked by the shared
+# `@opena2a/check-core` `buildNotFoundOutput` builder. `error` is CLI-specific
+# (HMA says "not found on npm.", ai-trust says "not found in the OpenA2A
+# Registry.") and allowed to differ — the shape is what CI enforces.
+must_match:
+  - name
+  - found
+  - ecosystem
+
+may_differ:
+  - path: error
+    reason: "CLI-specific wording — HMA sees an npm 404; ai-trust sees a registry miss. Both report `found: false` with `ecosystem: 'npm'`, which is the contract."
+  - path: errorHint
+    reason: "Optional — only emitted on paths that translate download errors (F3)."
+  - path: suggestions
+    reason: "Optional — only emitted on paths that offer did-you-mean completions."
+  - path: nextSteps
+    reason: "ai-trust emits CTA links (`ai-trust check ... --scan-if-missing`, `hackmyagent secure`); HMA doesn't. NotFoundOutput allows it as an optional field."
+
+normalize: []

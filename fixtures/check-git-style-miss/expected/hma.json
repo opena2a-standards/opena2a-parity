@@ -1,0 +1,7 @@
+{
+  "ecosystem": "github",
+  "error": "Repository \"anthropic/code-review\" not found on GitHub.",
+  "errorHint": "Verify the URL: https://github.com/anthropic/code-review",
+  "found": false,
+  "name": "anthropic/code-review"
+}

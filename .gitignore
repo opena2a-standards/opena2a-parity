@@ -9,3 +9,4 @@ node_modules/
 /.cursorrules
 /.aider*
 /.copilot/
+.pre-push-review-passed
