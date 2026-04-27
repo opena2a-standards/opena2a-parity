@@ -1,0 +1,47 @@
+description: >
+  Rich-context block parity (F12) on `check skill:<name>` across all three
+  CLIs. The seeded skill `opena2a/code-review-skill` lives in the registry's
+  `package_narratives` table; HMA, ai-trust, and opena2a (via spawn-delegation
+  to HMA) must all emit the same `CheckRichBlockInput` shape from
+  `@opena2a/cli-ui`'s renderCheckRichBlock contract. Closes F12 from
+  `opena2a-org/briefs/check-rich-context-skills-mcp-v1.md` (§9 acceptance criterion 7).
+
+kind: package-name
+package: "skill:opena2a/code-review-skill"
+
+exercises:
+  hma: "{BIN} check {PACKAGE} --json"
+  ai-trust: "{BIN} check {PACKAGE} --json"
+  # opena2a-cli's `check` spawn-delegates to hackmyagent (router.ts). The
+  # global --format json flag is forwarded as --json on the spawned HMA.
+  opena2a: "{BIN} check {PACKAGE} --format json"
+
+participants:
+  - hma
+  - ai-trust
+  - opena2a
+
+# Stable fields that depend only on the seeded narrative content, not on the
+# registry's volatile trust state. The narrative is keyed by (artifactType,
+# packageName, packageVersion) — these fields don't drift with trust score
+# changes, scan-age increments, or community-scan counts.
+must_match:
+  - name
+  - artifactType
+  - skill.skillName
+
+may_differ:
+  - path: header.trustVerdict
+    reason: "Derived from the registry's current trust answer (verdict + trustLevel + scanStatus). Volatile — flips between LISTED, LISTED_UNSCANNED, and BLOCKED across scan cycles. The `must_match` set captures the narrative-bound shape; this captures the live-trust-bound shape."
+  - path: header.trustScore
+    reason: "Live registry score; varies as scans complete or expire."
+  - path: header.lastScanAge
+    reason: "Time-since-scan; varies on every run."
+  - path: header.communityScans
+    reason: "Live counter; can increment between runs."
+  - path: latestVersion
+    reason: "Registry returns the most recently published narrative version (FindLatestFresh). Will reflect whichever version was last POSTed."
+  - path: header.findingsCount
+    reason: "Local scan would populate this; rich-block path does not run a local scan, so 0 today. Allowed to drift if local-scan integration ships."
+
+normalize: []

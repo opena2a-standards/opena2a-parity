@@ -1,0 +1,77 @@
+{
+  "name": "opena2a/code-review-skill",
+  "artifactType": "skill",
+  "header": {
+    "trustVerdict": "LISTED_UNSCANNED",
+    "latestVersionLabel": "0.3.99-test",
+    "communityScans": 0,
+    "findingsCount": 0
+  },
+  "hardcodedSecrets": {
+    "detected": [
+      {
+        "type": "unknown",
+        "typeLabel": "Credential",
+        "file": "SKILL.md",
+        "maskedValue": "",
+        "shownChars": 0,
+        "totalChars": 0,
+        "shipsInArtifact": true,
+        "severity": "critical"
+      }
+    ],
+    "scanCovered": true
+  },
+  "latestVersion": "0.3.99-test",
+  "skill": {
+    "skillName": "code-review",
+    "activationPhrases": [],
+    "behaviorDescription": "",
+    "permissions": [],
+    "externalServices": [],
+    "persistence": "none",
+    "toolCallsObserved": [],
+    "misuseNarrative": ""
+  },
+  "findings": [],
+  "verdictReasoning": [
+    {
+      "kind": "positive",
+      "text": "Declared permissions match observed tool usage exactly"
+    },
+    {
+      "kind": "gap",
+      "text": "No SOUL.md governance file in repo"
+    },
+    {
+      "kind": "gap",
+      "text": "Fewer than 5 community scans (5+ required for VERIFIED)"
+    },
+    {
+      "kind": "gap",
+      "text": "No provenance attestation"
+    },
+    {
+      "kind": "gap",
+      "text": "Credential hardcoded at SKILL.md (rotate regardless of install decision)"
+    }
+  ],
+  "nextSteps": [
+    {
+      "weight": "primary",
+      "label": "Review findings",
+      "command": "hackmyagent secure opena2a/code-review-skill --details"
+    },
+    {
+      "weight": "secondary",
+      "label": "Pin to current version (0.3.99-test)",
+      "command": "opena2a install opena2a/code-review-skill@0.3.99-test"
+    },
+    {
+      "weight": "secondary",
+      "label": "Re-scan locally",
+      "command": "hackmyagent secure opena2a/code-review-skill"
+    }
+  ],
+  "reportTool": "hackmyagent"
+}
