@@ -28,7 +28,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: opena2a-org/opena2a-parity
-          ref: ${{ github.workflow_sha }}
+          # In-repo (push/PR/dispatch on opena2a-parity itself): github.sha is parity's own sha.
+          # Cross-repo (workflow_call from opena2a/hma/ai-trust): github.sha is the caller's
+          # sha and is not present in opena2a-parity, so fall back to main. The workflow file
+          # version under test still comes from whatever ref the caller used in `uses: @<ref>`;
+          # this controls only which harness/script contents we run with.
+          ref: ${{ github.repository == 'opena2a-org/opena2a-parity' && github.sha || 'main' }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
