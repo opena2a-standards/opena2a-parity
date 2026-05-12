@@ -19,10 +19,6 @@ on:
         type: string
         default: "main"
 
-concurrency:
-  group: parity-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   parity:
     runs-on: ubuntu-latest
