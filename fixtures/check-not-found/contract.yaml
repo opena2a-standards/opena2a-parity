@@ -1,0 +1,49 @@
+description: >
+  NOT_FOUND parity. Every CLI must agree that a package not in the OpenA2A
+  Registry / underlying npm registry is identified by name, marked
+  `found: false`, and tagged with the correct ecosystem. Wording of the
+  human-facing error string and the next-step hint are intentionally CLI-
+  specific (ai-trust: nextSteps array, hma/opena2a: errorHint string) and
+  excluded from must_match. Exit codes also diverge intentionally: hma=1
+  (security-tool findings convention), ai-trust=2 (semantic outcome, per
+  briefs/cli-telemetry-success-semantics.md and [CHIEF-CSR-018]), opena2a=1
+  (inherits hma via spawn delegation). The current harness does not assert
+  exit codes; documenting the divergence here so a future exit-code parity
+  gate has the rationale.
+kind: package-name
+
+# A maximally unlikely-to-be-claimed npm name. Long, descriptive, dated, and
+# explicitly marked "do-not-publish". If this name is ever published the
+# fixture will fail and need a new name.
+package: "opena2a-parity-fixture-nonexistent-do-not-publish-20260524"
+
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+  ai-trust: "{BIN} check {PACKAGE} --no-scan --json"
+  # opena2a-cli spawn-delegates `check` to hackmyagent. Default flag set per
+  # check-registered-ai contract.
+  opena2a: "{BIN} check {PACKAGE} --format json"
+
+participants:
+  - hma
+  - ai-trust
+  - opena2a
+
+# Fields that must be byte-identical across all three CLIs. Narrow because the
+# NOT_FOUND surface is small: a CLI's only contractual job is to identify the
+# package, declare it missing, and tag the ecosystem.
+must_match:
+  - name
+  - found
+  - ecosystem
+
+may_differ:
+  - path: error
+    reason: "Wording differs intentionally: hma/opena2a phrase as 'not found on npm' (delegated registry-source language), ai-trust as 'not found in the OpenA2A Registry' (Registry-first framing). Both are correct for the CLI's stance."
+  - path: errorHint
+    reason: "hma/opena2a-only: a 'Verify the URL: https://www.npmjs.com/package/...' next-step hint. ai-trust uses nextSteps instead (see below)."
+  - path: nextSteps
+    reason: "ai-trust-only: a structured array of suggested follow-up commands ('--scan-if-missing', 'npx hackmyagent secure ...'). hma/opena2a use errorHint instead."
+
+# No noise needs to be stripped: NOT_FOUND outputs are timestamp-free and
+# package-name-stable. No normalize block.

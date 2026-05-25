@@ -1,0 +1,10 @@
+{
+  "name": "opena2a-parity-fixture-nonexistent-do-not-publish-20260524",
+  "found": false,
+  "error": "Package \"opena2a-parity-fixture-nonexistent-do-not-publish-20260524\" not found in the OpenA2A Registry.",
+  "nextSteps": [
+    "ai-trust check opena2a-parity-fixture-nonexistent-do-not-publish-20260524 --scan-if-missing",
+    "npx hackmyagent secure <project-dir>"
+  ],
+  "ecosystem": "npm"
+}
