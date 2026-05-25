@@ -1,0 +1,55 @@
+description: >
+  Behavioral-governance parity on a known-hardened SOUL.md. HMA's scan-soul
+  and opena2a-cli's scan-soul must agree byte-identically on the verdict
+  shape: same score (100), same grade ("A"), same level ("hardened"), same
+  agentProfile + agentTier classifier output. Sourced from the canonical
+  test/hma/SOUL.md fixture (advertised as 100/100 HARDENED in
+  hackmyagent/CLAUDE.md). ai-trust does not have a scan-soul command;
+  skipped per the established 2-way pattern (see secure-dirty-skill,
+  secure-empty-dir).
+
+  Closes a real coverage gap: prior to this fixture, the parity gate had
+  ZERO coverage of the behavioral-governance surface, even though both HMA
+  and opena2a ship scan-soul as a first-class command. A scoring-model
+  drift on either CLI's scan-soul path would have landed silently.
+
+exercises:
+  hma: "{BIN} scan-soul --json"
+  opena2a: "{BIN} scan-soul --json"
+
+participants:
+  - hma
+  - opena2a
+
+# Headline verdict fields. score + grade + level are the load-bearing claims
+# (the contract is "both CLIs report HARDENED 100/100 A"). agentProfile +
+# agentTier lock the upstream classifier so a classification regression
+# fires the gate too.
+must_match:
+  - score
+  - grade
+  - level
+  - agentProfile
+  - agentTier
+
+may_differ:
+  - path: file
+    reason: "Just the local filename string ('SOUL.md'); stable for this fixture but ecosystem-noise we don't care about gating."
+  - path: fileSize
+    reason: "Byte count of the input SOUL.md. Stable today (both CLIs see the same input) but excluded from must_match so any future content edit to the fixture doesn't require regenerating both expected files in lockstep."
+  - path: domains
+    reason: "Per-domain scoring breakdown (nested array of objects). Locked-by-byte-identity today, but the SOUL.md domain catalog evolves and adding domains shouldn't fail this fixture without the maintainer's intent."
+  - path: criticalFloor
+    reason: "Numeric floor for critical-domain scoring. Stable today; excluded to avoid coupling the fixture to a numeric constant that may legitimately change."
+  - path: criticalMissing
+    reason: "Array of missing critical domains. Empty on hardened SOUL.md today, but the array shape adds normalization complexity for what's already gated by `score: 100`."
+  - path: conformance
+    reason: "Conformance verdict string. Stable today; excluded so a wording change ('hardened' -> 'fully-hardened') doesn't fail without intent."
+  - path: profileForced
+    reason: "Boolean indicating whether the agent profile was explicitly declared. CLI-config-sensitive; stable today but not a load-bearing parity claim."
+  - path: profileMismatch
+    reason: "Boolean indicating profile/content drift. Stable today; same reasoning as profileForced."
+
+# No normalize block: outputs are byte-identical out of the box for this
+# input. Documenting absence so future fixtures considering a normalize
+# block can compare.
