@@ -1,0 +1,7 @@
+{
+  "name": "opena2a-parity-fixture-nonexistent-do-not-publish-20260524",
+  "found": false,
+  "error": "Package \"opena2a-parity-fixture-nonexistent-do-not-publish-20260524\" not found on npm.",
+  "errorHint": "Verify the URL: https://www.npmjs.com/package/opena2a-parity-fixture-nonexistent-do-not-publish-20260524",
+  "ecosystem": "npm"
+}
