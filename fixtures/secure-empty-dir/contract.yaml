@@ -1,0 +1,43 @@
+description: >
+  Baseline-score parity on a near-empty directory (single .gitkeep file, no
+  source, no config, no secrets). HMA and opena2a must score it identically
+  and surface the same finding (GIT-001 LOW "Missing .gitignore"). This gates
+  accidental score-inflation regressions in either CLI's scoring model: if a
+  scoring change pushes the empty-dir baseline above 98 or below it on only
+  one CLI, the gate fires. ai-trust is skipped (its `check` takes a package
+  name, not a directory; established 2-way pattern, see secure-dirty-skill).
+
+exercises:
+  hma: "{BIN} secure --format json"
+  opena2a: "{BIN} scan --format json"
+
+participants:
+  - hma
+  - opena2a
+
+# Fields that must be byte-identical across participating CLIs. Mirrors the
+# secure-dirty-skill set. score + maxScore are the load-bearing assertions;
+# platform + projectType lock the upstream classifier output.
+must_match:
+  - platform
+  - projectType
+  - score
+  - maxScore
+
+may_differ:
+  - path: timestamp
+    reason: "Wall-clock timestamp on every run; normalized to <ISO_TIMESTAMP>."
+  - path: findings
+    reason: "Both CLIs return 1 GIT-001 LOW finding with the same checkId, severity, file, and category. The per-finding `fix` field differs intentionally — HMA emits 'hackmyagent secure --fix', opena2a emits 'opena2a secure --fix' (each CLI tells the user to run its own fix command). Locking findings byte-identical would require normalizing that brand string; the existing harness does not have field-level normalization beyond regex/strip-key. Tracked for a future tighter assertion."
+  - path: allFindings
+    reason: "Full check catalog dump; depends on HMA's check registry version. Same brand-string concern as `findings`."
+
+normalize:
+  - kind: replace_regex
+    pattern: "{FIXTURE_INPUT_DIR}"
+    replacement: "<FIXTURE_INPUT_DIR>"
+  - kind: replace_regex
+    pattern: "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z"
+    replacement: "<ISO_TIMESTAMP>"
+  - kind: strip_key
+    path: timestamp
