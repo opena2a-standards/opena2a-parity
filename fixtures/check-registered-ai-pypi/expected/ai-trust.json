@@ -1,0 +1,90 @@
+{
+  "communityScans": 0,
+  "confidence": 0.21428571428571427,
+  "dependencies": {
+    "maxDepth": 0,
+    "minTrustLevel": 2,
+    "minTrustScore": 1,
+    "totalDeps": 0,
+    "vulnerableDeps": 0
+  },
+  "factors": {
+    "behavioralVerification": 0.5,
+    "dependencyHealth": 0.5,
+    "platformValidation": 0.48000000000000004,
+    "publisherVerification": 0.1,
+    "securityScan": 0,
+    "signatureIntegrity": 0.5,
+    "slsaProvenance": 0.5
+  },
+  "found": true,
+  "name": "anthropic",
+  "packageId": "41627a5f-1322-4217-911d-57d9ccb4d418",
+  "packageType": "ai_tool",
+  "platformSignals": {
+    "contributorCount": 0,
+    "githubForks": 0,
+    "githubStars": 0,
+    "hasDescription": true,
+    "hasDocs": false,
+    "hasLicense": false,
+    "maintenanceScore": 0,
+    "weeklyDownloads": 0
+  },
+  "scanStatus": "pending",
+  "scoreBreakdown": [
+    {
+      "contribution": 0.015,
+      "factor": "publisherVerification",
+      "reason": "",
+      "score": 0.1,
+      "weight": 0.15
+    },
+    {
+      "contribution": 0.015,
+      "factor": "slsaProvenance",
+      "reason": "",
+      "score": 0.5,
+      "weight": 0.03
+    },
+    {
+      "contribution": 0,
+      "factor": "securityScan",
+      "reason": "",
+      "score": 0,
+      "weight": 0.3
+    },
+    {
+      "contribution": 0.14400000000000002,
+      "factor": "platformValidation",
+      "reason": "",
+      "score": 0.48000000000000004,
+      "weight": 0.3
+    },
+    {
+      "contribution": 0.025,
+      "factor": "behavioralVerification",
+      "reason": "",
+      "score": 0.5,
+      "weight": 0.05
+    },
+    {
+      "contribution": 0.01,
+      "factor": "signatureIntegrity",
+      "reason": "",
+      "score": 0.5,
+      "weight": 0.02
+    },
+    {
+      "contribution": 0.075,
+      "factor": "dependencyHealth",
+      "reason": "",
+      "score": 0.5,
+      "weight": 0.15
+    }
+  ],
+  "scoringVersion": "v3",
+  "trustLevel": 2,
+  "trustScore": 0.3533333333333334,
+  "verdict": "listed"
+}
