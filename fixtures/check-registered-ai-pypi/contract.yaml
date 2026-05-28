@@ -7,27 +7,24 @@ description: >
   contracts at once: (a) ecosystem-prefix normalization across CLIs,
   and (b) trust-level parity on the resulting canonical record.
 
-  2-way for now (hma + ai-trust). opena2a-cli `check` spawn-delegates
-  to hackmyagent, and the currently-published `opena2a-cli` pins
-  `hackmyagent: 0.22.3` — which predates both the `--no-scan`
-  honoring of pip:/pypi: targets (hackmyagent #197, 0.23.2) and the
-  bare-name Registry query (hackmyagent #198, 0.23.3). opena2a's
-  participation is unblocked once opena2a-cli bumps its hackmyagent
-  pin to >= 0.23.3 and republishes; add it then via a follow-up
-  fixture-extension PR.
+  3-way as of opena2a-cli 0.10.4 (published 2026-05-28). opena2a-cli
+  now bundles `hackmyagent: 0.23.4` which honors `--no-scan` on
+  `pip:` / `pypi:` targets (hackmyagent #197, 0.23.2) and queries the
+  Registry with the bare PyPI name (hackmyagent #198, 0.23.3).
+  opena2a `check` spawn-delegates to bundled hackmyagent and emits a
+  JSON shape byte-identical to standalone `hackmyagent check`.
 kind: package-name
 package: "pip:anthropic"
 
 exercises:
   hma: "{BIN} check {PACKAGE} --no-scan --json"
   ai-trust: "{BIN} check {PACKAGE} --no-scan --json"
-  # opena2a kept here for the day we expand to 3-way; the .skip
-  # sentinel in expected/ excludes it from this run.
-  opena2a: "{BIN} check {PACKAGE} --format json"
+  opena2a: "{BIN} check {PACKAGE} --no-scan --json"
 
 participants:
   - hma
   - ai-trust
+  - opena2a
 
 # Fields that must be byte-identical across participating CLIs. Same set as
 # check-registered-ai — once the ecosystem prefix is stripped, all CLIs are

@@ -1,1 +1,0 @@
-Sentinel: opena2a-cli is excluded from this fixture until it bumps its hackmyagent dep to >= 0.23.3 (needs the bare-name Registry query from hackmyagent #198). Tracked separately.
