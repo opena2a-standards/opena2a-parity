@@ -1,0 +1,81 @@
+description: >
+  Trust-level parity on a known Tier-1 registered PyPI package. Mirrors
+  check-registered-ai (which targets a registered npm MCP server) but
+  exercises the PyPI ecosystem prefix (`pip:`). The Registry stores
+  PyPI packages under their bare name (e.g. `anthropic`), so every CLI
+  must strip the `pip:` / `pypi:` prefix before querying. Locks in two
+  contracts at once: (a) ecosystem-prefix normalization across CLIs,
+  and (b) trust-level parity on the resulting canonical record.
+
+  2-way for now (hma + ai-trust). opena2a-cli `check` spawn-delegates
+  to hackmyagent, and the currently-published `opena2a-cli` pins
+  `hackmyagent: 0.22.3` — which predates both the `--no-scan`
+  honoring of pip:/pypi: targets (hackmyagent #197, 0.23.2) and the
+  bare-name Registry query (hackmyagent #198, 0.23.3). opena2a's
+  participation is unblocked once opena2a-cli bumps its hackmyagent
+  pin to >= 0.23.3 and republishes; add it then via a follow-up
+  fixture-extension PR.
+kind: package-name
+package: "pip:anthropic"
+
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+  ai-trust: "{BIN} check {PACKAGE} --no-scan --json"
+  # opena2a kept here for the day we expand to 3-way; the .skip
+  # sentinel in expected/ excludes it from this run.
+  opena2a: "{BIN} check {PACKAGE} --format json"
+
+participants:
+  - hma
+  - ai-trust
+
+# Fields that must be byte-identical across participating CLIs. Same set as
+# check-registered-ai — once the ecosystem prefix is stripped, all CLIs are
+# looking at the same canonical Registry record.
+must_match:
+  - trustLevel
+  - name
+  - verdict
+  - packageType
+  - scanStatus
+
+may_differ:
+  - path: trustScore
+    reason: "Registry may tick 0.01 between back-to-back queries as new scans land; compare coarse level, not score."
+  - path: lastScannedAt
+    reason: "Server-side scan-completion timestamp; normalized out."
+  - path: packageId
+    reason: "ai-trust surfaces packageId, hma's TrustAnswer subset does not."
+  - path: confidence
+    reason: "ai-trust surfaces confidence, hma's TrustAnswer subset does not."
+  - path: communityScans
+    reason: "Updated on every new community scan; not a trust-level determinant."
+  - path: source
+    reason: "hma emits 'source: registry' on --no-scan; ai-trust doesn't emit this field."
+  - path: found
+    reason: "Both compute this client-side; deterministic but not contractual in M2."
+  - path: dependencies
+    reason: "Structure differs slightly between CLIs; M3 render surface unifies."
+  - path: securityProfile
+    reason: "ai-trust surfaces full securityProfile; hma doesn't. Render-surface concern for M3."
+  - path: factors
+    reason: "ai-trust-only detail — scoring breakdown."
+  - path: scoreBreakdown
+    reason: "ai-trust-only detail — per-factor contributions."
+  - path: platformSignals
+    reason: "ai-trust-only — GitHub stars, downloads, etc."
+  - path: scoringVersion
+    reason: "ai-trust-only."
+  - path: cveCount
+    reason: "Registry field emitted only when >0; availability differs."
+  - path: scanProvenance
+    reason: "ai-trust-only — Registry scan provenance fields when present."
+  - path: recommendation
+    reason: "Optional Registry field; availability differs between CLIs."
+
+normalize:
+  - kind: strip_key
+    path: lastScannedAt
+  - kind: replace_regex
+    pattern: "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z"
+    replacement: "<ISO_TIMESTAMP>"
