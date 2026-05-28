@@ -1,0 +1,16 @@
+{
+  "communityScans": 0,
+  "dependencies": {
+    "minTrustLevel": 2,
+    "totalDeps": 0,
+    "vulnerableDeps": 0
+  },
+  "found": true,
+  "name": "anthropic",
+  "packageType": "ai_tool",
+  "scanStatus": "pending",
+  "source": "registry",
+  "trustLevel": 2,
+  "trustScore": 0.3533333333333334,
+  "verdict": "listed"
+}
