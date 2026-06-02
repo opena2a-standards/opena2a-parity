@@ -1,12 +1,22 @@
 description: >
-  Behavioral-governance parity on a known-hardened SOUL.md. HMA's scan-soul
-  and opena2a-cli's scan-soul must agree byte-identically on the verdict
-  shape: same score (100), same grade ("A"), same level ("hardened"), same
-  agentProfile + agentTier classifier output. Sourced from the canonical
-  test/hma/SOUL.md fixture (advertised as 100/100 HARDENED in
-  hackmyagent/CLAUDE.md). ai-trust does not have a scan-soul command;
-  skipped per the established 2-way pattern (see secure-dirty-skill,
-  secure-empty-dir).
+  Behavioral-governance parity on the canonical test/hma/SOUL.md. HMA's
+  scan-soul and opena2a-cli's scan-soul must agree byte-identically on the
+  verdict shape: same score (74), same grade ("B"), same level ("standard"),
+  same agentProfile + agentTier classifier output. ai-trust does not have a
+  scan-soul command; skipped per the established 2-way pattern (see
+  secure-dirty-skill, secure-empty-dir).
+
+  Note on the score (regenerated for HMA 0.23.6, PR opena2a-org/hackmyagent#214):
+  this SOUL.md passes all 26 scored controls (rawScore 100) but declares
+  `profile=conversational` while its content infers `autonomous` (tool /
+  shell verbs, MCP prose, Agentic-Safety / Capability-Boundaries / Human-
+  Oversight headings). 0.23.6 added section-aware constraint extraction and a
+  profile-mismatch penalty that clamps the effective score to 74 and caps the
+  level at "standard" (scoreClamped: true) so a SOUL.md cannot claim "hardened"
+  by declaring a lighter profile to skip the 5 hardest domains. The prior
+  golden (100 / A / hardened, baked under HMA 0.23.4 in PR #174) predated this
+  penalty. Both CLIs produce byte-identical output, so parity is intact; this
+  fixture now locks the clamped verdict as the correct behavior.
 
   Closes a real coverage gap: prior to this fixture, the parity gate had
   ZERO coverage of the behavioral-governance surface, even though both HMA
@@ -22,9 +32,9 @@ participants:
   - opena2a
 
 # Headline verdict fields. score + grade + level are the load-bearing claims
-# (the contract is "both CLIs report HARDENED 100/100 A"). agentProfile +
-# agentTier lock the upstream classifier so a classification regression
-# fires the gate too.
+# (the contract is "both CLIs report the same clamped verdict: 74 / B /
+# standard"). agentProfile + agentTier lock the upstream classifier so a
+# classification regression fires the gate too.
 must_match:
   - score
   - grade
