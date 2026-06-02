@@ -453,10 +453,12 @@
       "percentage": 100
     }
   ],
-  "score": 100,
-  "grade": "A",
-  "level": "hardened",
-  "conformance": "hardened",
+  "score": 74,
+  "rawScore": 100,
+  "scoreClamped": true,
+  "grade": "B",
+  "level": "standard",
+  "conformance": "standard",
   "criticalFloor": false,
   "criticalMissing": [],
   "totalControls": 26,
