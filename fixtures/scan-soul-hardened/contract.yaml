@@ -1,10 +1,16 @@
 description: >
-  Behavioral-governance parity on a known-hardened SOUL.md. HMA's scan-soul
-  and opena2a-cli's scan-soul must agree byte-identically on the verdict
-  shape: same score (100), same grade ("A"), same level ("hardened"), same
-  agentProfile + agentTier classifier output. Sourced from the canonical
-  test/hma/SOUL.md fixture (advertised as 100/100 HARDENED in
-  hackmyagent/CLAUDE.md). ai-trust does not have a scan-soul command;
+  Behavioral-governance parity on the canonical hardened SOUL.md fixture
+  scored under HMA 0.23.6's scope-aware clamping. HMA's scan-soul and
+  opena2a-cli's scan-soul must agree byte-identically on the verdict
+  shape: same score (74, clamped from 100), same grade ("B"), same level
+  ("standard"), same agentProfile + agentTier classifier output. The
+  fixture's `<!-- soul:profile=conversational -->` marker conflicts with
+  the body's TOOL-USING content; both CLIs detect the mismatch, skip the
+  five trust/capability/data/agentic/oversight domains, and clamp the
+  score from 100 to 74 with a `profileMismatch` block explaining the gap.
+  Pre-clamp (HMA <= 0.23.4) this fixture scored 100/A/hardened; the 0.23.6
+  cross-analyzer-consistency re-baseline keeps both CLIs agreeing on the
+  same clamped verdict. ai-trust does not have a scan-soul command;
   skipped per the established 2-way pattern (see secure-dirty-skill,
   secure-empty-dir).
 
@@ -22,9 +28,9 @@ participants:
   - opena2a
 
 # Headline verdict fields. score + grade + level are the load-bearing claims
-# (the contract is "both CLIs report HARDENED 100/100 A"). agentProfile +
-# agentTier lock the upstream classifier so a classification regression
-# fires the gate too.
+# (the contract is "both CLIs report the same clamped 74/B/standard verdict
+# under HMA 0.23.6's scope-aware clamp"). agentProfile + agentTier lock the
+# upstream classifier so a classification regression fires the gate too.
 must_match:
   - score
   - grade
