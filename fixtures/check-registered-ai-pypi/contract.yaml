@@ -34,6 +34,12 @@ must_match:
   - name
   - verdict
   - packageType
+  # scanStatus: enforced for hma/opena2a via their goldens. ai-trust >=0.7.6
+  # (ai-trust#61, curated --json per ai-trust#191) intentionally omits
+  # scan-only fields from the registry-source shape, so its golden omits it
+  # too (absent == absent). Re-baselined 2026-06-10 after the field's removal
+  # turned parity red on hackmyagent main; verified no consumer parses
+  # scanStatus from ai-trust JSON.
   - scanStatus
 
 may_differ:
@@ -48,7 +54,7 @@ may_differ:
   - path: communityScans
     reason: "Updated on every new community scan; not a trust-level determinant."
   - path: source
-    reason: "hma emits 'source: registry' on --no-scan; ai-trust doesn't emit this field."
+    reason: "hma emits 'source: registry' on --no-scan; ai-trust >=0.7.6 emits 'source: registry' in the curated shape."
   - path: found
     reason: "Both compute this client-side; deterministic but not contractual in M2."
   - path: dependencies
