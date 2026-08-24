@@ -45,6 +45,9 @@ jobs:
       - name: Install harness deps
         run: npm ci || npm install
 
+      - name: Harness unit tests
+        run: npm test
+
       - name: Checkout hackmyagent
         uses: actions/checkout@v4
         with:

@@ -55,6 +55,79 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
   }
 }
 
+// A registry-backed probe can fail transiently: ai-trust's registry client has a
+// 10s default timeout against api.oa2a.org (Azure), and a cold-start request can
+// exceed it. On timeout the CLI still emits valid JSON, but of the operational
+// shape { error, found: false, ... } with none of the must-match fields, so the
+// comparison reads every expected field as undefined and the whole gate reds on
+// a flake rather than real drift (measured: CI run 32738932700, the exact same
+// fixture returning trustLevel=2/verdict=listed for hackmyagent in the same run).
+//
+// isTransientProbeFailure detects ONLY that operational signature. A genuine
+// value drift (valid JSON, no `error`, wrong values) does not match and is never
+// retried, so the gate still catches real drift. A persistent outage exhausts the
+// retries and then fails loudly through the normal comparison - transient is
+// smoothed, broken is still broken.
+const PROBE_RETRIES = 3;
+const PROBE_BACKOFF_MS = Number(process.env.PARITY_PROBE_BACKOFF_MS ?? 1500);
+
+function syncSleep(ms: number): void {
+  // The harness is synchronous (execSync), so back off synchronously too.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+export function isTransientProbeFailure(parsed: unknown): boolean {
+  return (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "error" in parsed &&
+    Boolean((parsed as { error?: unknown }).error)
+  );
+}
+
+// Runs the CLI and parses its JSON, retrying only on a transient probe failure
+// (an operational { error } payload, or unparseable/empty output). Returns the
+// last attempt's result regardless, so the caller's comparison still runs.
+export function probeWithRetry(
+  cmd: string,
+  positionalArg: string | null,
+  label: string,
+): { exitCode: number; stdout: string; parsed: unknown; parseOk: boolean } {
+  let last: { exitCode: number; stdout: string; parsed: unknown; parseOk: boolean } = {
+    exitCode: 1,
+    stdout: "",
+    parsed: undefined,
+    parseOk: false,
+  };
+  for (let attempt = 1; attempt <= PROBE_RETRIES; attempt++) {
+    const { exitCode, stdout } = runCli(cmd, positionalArg);
+    let parsed: unknown;
+    let parseOk = true;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      parseOk = false;
+    }
+    last = { exitCode, stdout, parsed, parseOk };
+
+    const transient = !parseOk || isTransientProbeFailure(parsed);
+    if (!transient || attempt === PROBE_RETRIES) {
+      if (transient && attempt === PROBE_RETRIES) {
+        console.error(
+          `[${label}] probe still failing after ${PROBE_RETRIES} attempts (exit=${exitCode}); treating as a real failure.`,
+        );
+      }
+      return last;
+    }
+    const why = parseOk ? (parsed as { error?: unknown }).error : "non-JSON output";
+    console.error(
+      `[${label}] transient probe failure (attempt ${attempt}/${PROBE_RETRIES}): ${String(why)}. Retrying in ${PROBE_BACKOFF_MS * attempt}ms...`,
+    );
+    syncSleep(PROBE_BACKOFF_MS * attempt);
+  }
+  return last;
+}
+
 function getPath(obj: unknown, path: string): unknown {
   if (path === "" || path === "$") return obj;
   const parts = path.replace(/^\$\.?/, "").split(".").filter(Boolean);
@@ -187,22 +260,20 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     } else {
       positionalArg = inputDir;
     }
-    const { exitCode, stdout } = runCli(cmd, positionalArg);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(stdout);
-    } catch {
+    const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`);
+    if (!parseOk) {
       console.error(`[${fixtureName}] ${cli} produced non-JSON output (exit=${exitCode}). First 400 chars:\n${stdout.slice(0, 400)}`);
       failures++;
       continue;
     }
-    parsed = normalize(parsed, contract.normalize ?? [], kind === "directory" ? inputDir : "");
-    parsed = applyIntentionalDrift(parsed, cli);
+    let parsedVal: unknown = parsed;
+    parsedVal = normalize(parsedVal, contract.normalize ?? [], kind === "directory" ? inputDir : "");
+    parsedVal = applyIntentionalDrift(parsedVal, cli);
 
     const actualPath = join(ACTUAL_DIR, fixtureName, `${cli}.json`);
-    writeFileSync(actualPath, stableStringify(parsed));
+    writeFileSync(actualPath, stableStringify(parsedVal));
 
-    results[cli] = { cli, exitCode, stdout, parsed };
+    results[cli] = { cli, exitCode, stdout, parsed: parsedVal };
   }
 
   for (const cli of contract.participants) {
@@ -274,4 +345,8 @@ function main() {
   process.exit(totalFailures === 0 ? 0 : 1);
 }
 
-main();
+// Run the gate only when executed directly (e.g. `npm run parity`). Importing
+// this module (the retry helpers are unit-tested) must not trigger a full run.
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
