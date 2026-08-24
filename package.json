@@ -9,7 +9,8 @@
   },
   "scripts": {
     "parity": "node --experimental-strip-types src/run-parity.ts",
-    "parity:drift-demo": "INTENTIONAL_DRIFT=1 node --experimental-strip-types src/run-parity.ts"
+    "parity:drift-demo": "INTENTIONAL_DRIFT=1 node --experimental-strip-types src/run-parity.ts",
+    "test": "PARITY_PROBE_BACKOFF_MS=1 node --experimental-strip-types --test \"test/*.test.ts\""
   },
   "dependencies": {
     "yaml": "2.5.1"
