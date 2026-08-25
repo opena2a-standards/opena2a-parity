@@ -6,8 +6,8 @@ CLI commands. Every file here is designed to trigger specific detections.
 ## Quick Reference
 
 ```bash
-CLI="node /Users/ecolibria/workspace/opena2a-org/hackmyagent/dist/cli.js"
-DIR="/Users/ecolibria/workspace/opena2a-org/test/hma"
+CLI="node /home/test-user/workspace/opena2a-org/hackmyagent/dist/cli.js"
+DIR="/home/test-user/workspace/opena2a-org/test/hma"
 
 # --- Hardening Scanner (147+ checks) ---
 $CLI secure $DIR
