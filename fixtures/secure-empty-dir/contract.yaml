@@ -1,11 +1,27 @@
 description: >
   Baseline-score parity on a near-empty directory (single .gitkeep file, no
-  source, no config, no secrets). HMA and opena2a must score it identically
-  and surface the same finding (GIT-001 LOW "Missing .gitignore"). This gates
-  accidental score-inflation regressions in either CLI's scoring model: if a
-  scoring change pushes the empty-dir baseline above 98 or below it on only
-  one CLI, the gate fires. ai-trust is skipped (its `check` takes a package
-  name, not a directory; established 2-way pattern, see secure-dirty-skill).
+  source, no config, no secrets). This gates accidental score-inflation
+  regressions in either CLI's scoring model: each CLI is pinned to its own
+  expected baseline, and a scoring change that moves either CLI off its
+  baseline fires the gate. STAGED DIVERGENCE (temporary): HMA's baseline is
+  93 under the hackmyagent#458 not-applicable contract - the rendered
+  findings list is GIT-001 LOW "Missing .gitignore" plus DEP-001 MEDIUM (now
+  carrying file: package-lock.json; it previously failed pathless and
+  score-neutral), SANDBOX-001 (file: Dockerfile) also counts against the
+  score but is type-suppressed from the rendered list on library trees
+  (recorded in allFindings and coverage.suppressedFailures), and 13 checks
+  whose subject is absent emit notApplicable records. opena2a's baseline
+  stays 98 until opena2a bumps its bundled scanner to a hackmyagent release
+  carrying #458 (0.33.0 or later). When it does, re-baseline
+  expected/opena2a.json to 93 and fold this note back into a single
+  shared-baseline sentence - the steady-state contract is that both CLIs
+  score this fixture identically. Only the score literal moves in
+  expected/hma.json: the golden body beyond the compared must_match
+  dot-paths is documentation, not assertion, and is not re-captured because
+  #458 output adds machine-dependent fields (machinePosture embeds
+  host-local paths), so any raw capture is machine-specific. ai-trust is
+  skipped (its `check` takes a package name, not a directory; established
+  2-way pattern, see secure-dirty-skill).
 
 exercises:
   hma: "{BIN} secure --format json"
@@ -28,9 +44,9 @@ may_differ:
   - path: timestamp
     reason: "Wall-clock timestamp on every run; normalized to <ISO_TIMESTAMP>."
   - path: findings
-    reason: "Both CLIs return 1 GIT-001 LOW finding with the same checkId, severity, file, and category. The per-finding `fix` field differs intentionally — HMA emits 'hackmyagent secure --fix', opena2a emits 'opena2a secure --fix' (each CLI tells the user to run its own fix command). Locking findings byte-identical would require normalizing that brand string; the existing harness does not have field-level normalization beyond regex/strip-key. Tracked for a future tighter assertion."
+    reason: "Divergent during the staged re-baseline: HMA renders 2 findings (GIT-001 LOW plus DEP-001 MEDIUM with file package-lock.json, per hackmyagent#458); opena2a renders 1 (GIT-001 only) until its bundled scanner carries #458. The per-finding `fix` field also differs intentionally — HMA emits 'hackmyagent secure --fix', opena2a emits 'opena2a secure --fix' (each CLI tells the user to run its own fix command). Locking findings byte-identical would require normalizing that brand string; the existing harness does not have field-level normalization beyond regex/strip-key. Tracked for a tighter assertion once both CLIs share the 93 baseline."
   - path: allFindings
-    reason: "Full check catalog dump; depends on HMA's check registry version. Same brand-string concern as `findings`."
+    reason: "Full check catalog dump; depends on HMA's check registry version, and shape-divergent during the staged re-baseline (notApplicable records exist only on the #458 side). Same brand-string concern as `findings`."
 
 normalize:
   - kind: replace_regex
