@@ -54,6 +54,31 @@ See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 3. Write `contract.yaml` naming what must match and what may differ (with reasons).
 4. Open a PR; CI runs the harness against your new fixture.
 
+## Re-baselining goldens (golden-first)
+
+When a CLI intentionally changes contract-tracked output, the golden moves FIRST.
+A consumer repo that requires `parity / parity` blocks its CLI PR on a red parity
+leg, so landing the golden before the CLI change merges is the only ordering that
+does not strand it. Consumers resolve this harness and its goldens from this repo's
+`main` on every cross-repo call (the workflow pin covers only workflow steps), so a
+golden landed here is live for them immediately — no pin bump.
+
+1. Build the changed CLI locally and run the harness against it (Quickstart env vars).
+2. Read the capture under `actual/<fixture>/<cli>.json`. Every drifted field must be an
+   intended consequence of the CLI change. An unintended drift is a bug in the CLI
+   change — fix it there; do not re-baseline over it.
+3. Copy the verified capture over the golden:
+   `cp actual/<fixture>/<cli>.json fixtures/<fixture>/expected/<cli>.json`
+4. Commit to `main` with a message naming the CLI change that motivated the
+   re-baseline (e.g. the consumer PR number). This repo intentionally has no required
+   checks on `main` so a golden lands in minutes, not hours.
+5. Re-run the consumer PR's parity leg (re-run the failed job, or push an empty
+   update). It now diffs against the new golden.
+
+Ordering the other way (CLI merges first, golden follows) leaves the consumer's `main`
+red on parity until the golden lands. If a re-baseline ever costs more than a day,
+record the measurement and reopen the ordering decision.
+
 ## Intentional-drift demo
 
 `npm run parity:drift-demo` — sets `INTENTIONAL_DRIFT=1`, which the harness applies by mutating one must-match field in the captured output. Expected exit code: non-zero with a clear diff. Used to prove the gate is live.

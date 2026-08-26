@@ -296,6 +296,7 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
       console.error(`\n[FAIL] ${fixtureName} × ${cli}: ${diffs.length} must-match field(s) drifted`);
       for (const d of diffs) console.error(d);
       console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
+      console.error(`  Intended output change? Re-baseline golden-first: README.md "Re-baselining goldens".`);
       failures += diffs.length;
     } else {
       console.log(`[OK]   ${fixtureName} × ${cli}: ${contract.must_match.length} must-match fields byte-identical`);
