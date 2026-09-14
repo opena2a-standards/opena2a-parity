@@ -28,6 +28,23 @@ test("absentMustMatchKeys names exactly the contract keys the payload does not c
   assert.deepEqual(absentMustMatchKeys("a string", ["found"]), ["found"]);
 });
 
+test("a key the participant's golden also omits is absence on both sides, not a shape failure", () => {
+  // check-registered-ai lists scanStatus under must_match and records that ai-trust's golden
+  // omits it on purpose. The payload omitting it too is the contract being met.
+  const withScanStatus = ["found", "trustLevel", "verdict", "packageType", "scanStatus"];
+  const aiTrustGolden = { found: true, trustLevel: 3, verdict: "passed", packageType: "mcp_server" };
+  const aiTrustActual = { found: true, trustLevel: 3, verdict: "passed", packageType: "mcp_server", source: "registry" };
+  assert.deepEqual(absentMustMatchKeys(aiTrustActual, withScanStatus, aiTrustGolden), []);
+  // a key the golden carries and the payload omits is still absent
+  const hmaGolden = { ...aiTrustGolden, scanStatus: "warnings" };
+  assert.deepEqual(absentMustMatchKeys(aiTrustActual, withScanStatus, hmaGolden), ["scanStatus"]);
+  // the fall-through scan document is a shape failure against a golden that carries the keys
+  const scanDoc = { type: "npm-package", name: "@scope/pkg", score: 71 };
+  assert.deepEqual(absentMustMatchKeys(scanDoc, MUST_MATCH, aiTrustGolden), MUST_MATCH);
+  // and without a golden every absent key counts, as before
+  assert.deepEqual(absentMustMatchKeys(aiTrustActual, withScanStatus), ["scanStatus"]);
+});
+
 test("a participant returning exit 0 with the must-match keys absent is a shape failure the retry does not absorb", () => {
   const dir = mkdtempSync(join(tmpdir(), "parity-shape-"));
   const counter = join(dir, "n");

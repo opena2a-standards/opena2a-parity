@@ -218,8 +218,17 @@ function sortKeysReplacer() {
 
 // The contract keys a payload does not carry at all. Absence is the key resolving to undefined;
 // a present key holding null or a wrong value is a value question for the comparison, not a shape one.
-export function absentMustMatchKeys(parsed: unknown, mustMatch: string[]): string[] {
-  return mustMatch.filter((key) => getPath(parsed, key) === undefined);
+//
+// A key the participant's own golden also omits is absence on both sides, which is what the
+// contract recorded for ai-trust's `scanStatus` (check-registered-ai, 2026-06-10: "absent ==
+// absent") and what #21 broke: it read every absent must-match key as a wrong-shape document and
+// turned hackmyagent main's required parity context red on ai-trust rows that had not changed.
+// Without a golden every absent key counts, so the fall-through case #21 was written for (a scan
+// document where the golden carries found, trustLevel, verdict) is still a SHAPE failure.
+export function absentMustMatchKeys(parsed: unknown, mustMatch: string[], golden?: unknown): string[] {
+  return mustMatch.filter(
+    (key) => getPath(parsed, key) === undefined && (golden === undefined || getPath(golden, key) !== undefined),
+  );
 }
 
 // One line per participant, naming every absent key. Distinct from [FAIL] (value drift) on purpose:
@@ -297,7 +306,10 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     const actualPath = join(ACTUAL_DIR, fixtureName, `${cli}.json`);
     writeFileSync(actualPath, stableStringify(parsedVal));
 
-    const absent = absentMustMatchKeys(parsedVal, contract.must_match);
+    // The golden decides which absences are shape failures; a missing golden is reported below.
+    const shapeGoldenPath = join(expectedDir, `${cli}.json`);
+    const shapeGolden = existsSync(shapeGoldenPath) ? JSON.parse(readFileSync(shapeGoldenPath, "utf8")) : undefined;
+    const absent = absentMustMatchKeys(parsedVal, contract.must_match, shapeGolden);
     if (absent.length > 0) {
       const errorField = isTransientProbeFailure(parsedVal) ? (parsedVal as { error?: unknown }).error : undefined;
       console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, contract.must_match.length, errorField)}`);
