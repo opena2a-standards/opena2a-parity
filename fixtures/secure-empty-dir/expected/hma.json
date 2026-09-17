@@ -210,13 +210,13 @@
     {
       "checkId": "DEP-001",
       "name": "Dependency Lock File",
-      "description": "No dependency lock file found",
       "category": "dependencies",
-      "severity": "medium",
-      "passed": false,
-      "message": "No lock file found - dependency versions may vary between installs",
+      "notApplicable": {
+        "subject": "package.json",
+        "reason": "No package.json in the scanned tree, so there is no dependency manifest to inspect."
+      },
+      "message": "Not applicable: no package.json to inspect",
       "fixable": false,
-      "guidance": "Without a lock file, npm install can resolve to different package versions on different machines, including versions with known vulnerabilities or supply-chain backdoors.",
       "attackClass": "ORG-SKILL-SPREAD"
     },
     {
@@ -496,6 +496,6 @@
       "attackClass": "SOUL-INJECT"
     }
   ],
-  "score": 93,
+  "score": 98,
   "maxScore": 100
 }
