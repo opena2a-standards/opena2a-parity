@@ -3,20 +3,24 @@ description: >
   source, no config, no secrets). This gates accidental score-inflation
   regressions in either CLI's scoring model: each CLI is pinned to its own
   expected baseline, and a scoring change that moves either CLI off its
-  baseline fires the gate. STAGED DIVERGENCE (temporary): HMA's baseline is
-  93 under the hackmyagent#458 not-applicable contract - the rendered
-  findings list is GIT-001 LOW "Missing .gitignore" plus DEP-001 MEDIUM (now
-  carrying file: package-lock.json; it previously failed pathless and
-  score-neutral), SANDBOX-001 (file: Dockerfile) also counts against the
-  score but is type-suppressed from the rendered list on library trees
-  (recorded in allFindings and coverage.suppressedFailures), and 13 checks
-  whose subject is absent emit notApplicable records. opena2a's baseline
-  stays 98 until opena2a bumps its bundled scanner to a hackmyagent release
-  carrying #458 (0.33.0 or later). When it does, re-baseline
-  expected/opena2a.json to 93 and fold this note back into a single
-  shared-baseline sentence - the steady-state contract is that both CLIs
-  score this fixture identically. Only the score literal moves in
-  expected/hma.json: the golden body beyond the compared must_match
+  baseline fires the gate. Both CLIs score this fixture 98 (shared
+  baseline), for two different reasons until opena2a's bundled scanner
+  catches up. HMA's 98 is the hackmyagent#756 contract (issue
+  hackmyagent#751): DEP-001's subject is the package manifest, so on a tree
+  with no package.json it emits a notApplicable record (14 checks whose
+  subject is absent do, up from 13 under #458), and the rendered findings
+  list is GIT-001 LOW "Missing .gitignore" alone; SANDBOX-001 (file:
+  Dockerfile) is type-suppressed from the rendered list and the severity
+  counts on library trees (recorded in allFindings and
+  coverage.suppressedFailures). Measured on hackmyagent main f64739a with
+  #756 merged: score 98, rawScore 98, counts low 1. Between #458 (0.33.0)
+  and #756, HMA scored 93 because DEP-001 failed MEDIUM against
+  package-lock.json; that pin was retired by #756. opena2a's 98 comes from
+  its pinned pre-#458 scanner, where DEP-001 fails pathless and
+  score-neutral. If opena2a bumps to a 0.33.x scanner (carrying #458, not
+  #756) its baseline moves to 93 and must be re-pinned; a bump to a release
+  carrying #756 keeps 98. Only the score literal and the DEP-001 record move
+  in expected/hma.json: the golden body beyond the compared must_match
   dot-paths is documentation, not assertion, and is not re-captured because
   #458 output adds machine-dependent fields (machinePosture embeds
   host-local paths), so any raw capture is machine-specific. ai-trust is
@@ -44,9 +48,9 @@ may_differ:
   - path: timestamp
     reason: "Wall-clock timestamp on every run; normalized to <ISO_TIMESTAMP>."
   - path: findings
-    reason: "Divergent during the staged re-baseline: HMA renders 2 findings (GIT-001 LOW plus DEP-001 MEDIUM with file package-lock.json, per hackmyagent#458); opena2a renders 1 (GIT-001 only) until its bundled scanner carries #458. The per-finding `fix` field also differs intentionally — HMA emits 'hackmyagent secure --fix', opena2a emits 'opena2a secure --fix' (each CLI tells the user to run its own fix command). Locking findings byte-identical would require normalizing that brand string; the existing harness does not have field-level normalization beyond regex/strip-key. Tracked for a tighter assertion once both CLIs share the 93 baseline."
+    reason: "Both CLIs render 1 finding (GIT-001 LOW) since hackmyagent#756 made DEP-001 not applicable without a manifest. The per-finding `fix` field still differs intentionally — HMA emits 'hackmyagent secure --fix', opena2a emits 'opena2a secure --fix' (each CLI tells the user to run its own fix command). Locking findings byte-identical would require normalizing that brand string; the existing harness does not have field-level normalization beyond regex/strip-key. Tracked for a tighter assertion."
   - path: allFindings
-    reason: "Full check catalog dump; depends on HMA's check registry version, and shape-divergent during the staged re-baseline (notApplicable records exist only on the #458 side). Same brand-string concern as `findings`."
+    reason: "Full check catalog dump; depends on HMA's check registry version, and shape-divergent while opena2a's bundled scanner predates #458 (notApplicable records exist only on the HMA side). Same brand-string concern as `findings`."
 
 normalize:
   - kind: replace_regex
