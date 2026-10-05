@@ -3,10 +3,12 @@
 secrets.json
 *.pem
 *.key
-# Fixture inputs are deliberately insecure test data and are always tracked: this re-include
-# overrides the rules above and any contributor-local ignore rule under fixtures/.
+# Fixture inputs are deliberately insecure test data and stay tracked: this re-include overrides
+# the rules above, and a contributor-local rule, for paths under fixtures/. It cannot override a
+# local rule that ignores the fixtures directory itself, or the rules below.
 !/fixtures/**
-# Dependencies, logs and OS metadata stay ignored everywhere, fixtures included.
+# Dependencies, logs and OS metadata stay ignored everywhere, fixtures included; add a fixture
+# input these match with `git add -f`.
 node_modules/
 *.log
 .DS_Store

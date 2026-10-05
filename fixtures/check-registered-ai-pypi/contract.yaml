@@ -56,11 +56,11 @@ may_differ:
   - path: source
     reason: "hma emits 'source: registry' on --no-scan; ai-trust >=0.7.6 emits 'source: registry' in the curated shape."
   - path: found
-    reason: "Both compute this client-side; deterministic but not contractual in M2."
+    reason: "Both compute this client-side; deterministic, but not part of this contract."
   - path: dependencies
-    reason: "Structure differs slightly between CLIs; M3 render surface unifies."
+    reason: "Structure differs slightly between CLIs until they share a render layer."
   - path: securityProfile
-    reason: "ai-trust surfaces full securityProfile; hma doesn't. Render-surface concern for M3."
+    reason: "ai-trust surfaces full securityProfile; hma doesn't. A rendering difference, not a trust-level one."
   - path: factors
     reason: "ai-trust-only detail — scoring breakdown."
   - path: scoreBreakdown

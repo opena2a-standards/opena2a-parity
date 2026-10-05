@@ -32,12 +32,14 @@ type ProbeResult = {
   parsed: unknown;
 };
 
-function envBinOrThrow(name: string): string {
-  const v = process.env[name];
-  if (!v) {
-    throw new Error(`env var ${name} is required — e.g. ${name}="node /path/to/dist/cli.js"`);
-  }
-  return v;
+const BIN_VARS: Record<CLI, string> = { hma: "HMA_BIN", opena2a: "OPENA2A_BIN", "ai-trust": "AI_TRUST_BIN" };
+
+// One line per CLI variable that is unset or empty. main() prints them and exits 2, as it does for
+// "no fixtures found": a missing variable is a usage error, not a crash with a stack trace.
+export function missingBinMessages(env: Record<string, string | undefined>): string[] {
+  return Object.values(BIN_VARS)
+    .filter((name) => !env[name])
+    .map((name) => `env var ${name} is required — e.g. ${name}="node /path/to/dist/cli.js"`);
 }
 
 function runCli(invocation: string, positionalArg: string | null): { exitCode: number; stdout: string } {
@@ -66,14 +68,21 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
 // isTransientProbeFailure detects ONLY that operational signature. A genuine
 // value drift (valid JSON, no `error`, wrong values) does not match and is never
 // retried, so the gate still catches real drift. A persistent outage exhausts the
-// retries and then fails loudly through the normal comparison - transient is
-// smoothed, broken is still broken.
+// retries and then fails the leg - transient is smoothed, broken is still broken.
 //
 // Where the participant's golden itself carries an error (the check-not-found
 // fixtures), a payload carrying that same error is the expected outcome, not a
 // transient one: it goes to the comparison on the first attempt instead of
 // burning the retry budget and logging a real failure on a run that passes. A
-// different error on that fixture (a registry timeout) is still retried.
+// different error on that fixture (a registry timeout) is still retried, and if
+// it still differs after the last attempt runFixture fails the leg whatever the
+// must-match keys say: a timeout payload there carries name, found: false and
+// ecosystem with the expected values, so the error is the only field that tells
+// "not found" from "not reached". A CLI that rewords that error re-baselines its
+// golden first, like any other intended output change.
+//
+// Goldens are copied from normalized captures, so the decision is made on the
+// normalized payload, never the raw one.
 const PROBE_RETRIES = 3;
 
 // What the retry is keyed on, in the retry's own log line, so the next reader does not assume it
@@ -102,13 +111,16 @@ export function isTransientProbeFailure(parsed: unknown, golden?: unknown): bool
 
 // Runs the CLI and parses its JSON, retrying only on a transient probe failure
 // (an operational { error } payload the golden does not expect, or
-// unparseable/empty output). Returns the last attempt's result regardless, so
-// the caller's comparison still runs.
+// unparseable/empty output). `prepare` (runFixture passes the fixture's
+// normalization) runs on each parsed payload before that decision, and `parsed`
+// is the prepared payload. Returns the last attempt's result regardless, so the
+// caller's comparison still runs.
 export function probeWithRetry(
   cmd: string,
   positionalArg: string | null,
   label: string,
   golden?: unknown,
+  prepare: (parsed: unknown) => unknown = (parsed) => parsed,
 ): { exitCode: number; stdout: string; parsed: unknown; parseOk: boolean } {
   let last: { exitCode: number; stdout: string; parsed: unknown; parseOk: boolean } = {
     exitCode: 1,
@@ -125,6 +137,7 @@ export function probeWithRetry(
     } catch {
       parseOk = false;
     }
+    if (parseOk) parsed = prepare(parsed);
     last = { exitCode, stdout, parsed, parseOk };
 
     const transient = !parseOk || isTransientProbeFailure(parsed, golden);
@@ -259,6 +272,17 @@ function diffKey(actual: unknown, golden: unknown, path: string): string | null 
   return `  at ${path}:\n    expected: ${gj}\n    actual:   ${aj}`;
 }
 
+// The verdict for an error payload the golden does not expect that outlasted every retry. The probe
+// has already logged it as a real failure; this line makes the leg's result say the same.
+export function unexpectedErrorReport(label: string, exitCode: number, actual: unknown, golden: unknown): string {
+  return [
+    `[FAIL] ${label}: exit=${exitCode}, error payload still differs from the golden's after ${PROBE_RETRIES} attempts`,
+    diffKey(actual, golden, "error"),
+    `  An unreachable registry fails here even when the must-match fields agree. A reworded error is an`,
+    `  intended output change: re-baseline golden-first (README.md "Re-baselining goldens").`,
+  ].join("\n");
+}
+
 // Exported, with the two roots overridable, so a unit test can drive one fixture end to end
 // against a stub CLI in a temporary directory instead of the repository's own fixtures/ and actual/.
 export function runFixture(
@@ -312,15 +336,15 @@ export function runFixture(
     // a missing golden is reported below.
     const shapeGoldenPath = join(expectedDir, `${cli}.json`);
     const shapeGolden = existsSync(shapeGoldenPath) ? JSON.parse(readFileSync(shapeGoldenPath, "utf8")) : undefined;
-    const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden);
+    // Normalized inside the probe, so the expected-error decision sees what the golden was copied from.
+    const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], kind === "directory" ? inputDir : "");
+    const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden, fixtureNormalize);
     if (!parseOk) {
       console.error(`[${fixtureName}] ${cli} produced non-JSON output (exit=${exitCode}). First 400 chars:\n${stdout.slice(0, 400)}`);
       failures++;
       continue;
     }
-    let parsedVal: unknown = parsed;
-    parsedVal = normalize(parsedVal, contract.normalize ?? [], kind === "directory" ? inputDir : "");
-    parsedVal = applyIntentionalDrift(parsedVal, cli);
+    const parsedVal = applyIntentionalDrift(parsed, cli);
 
     const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
     writeFileSync(actualPath, stableStringify(parsedVal));
@@ -332,6 +356,15 @@ export function runFixture(
       console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
       failures += absent.length;
       continue; // no golden comparison for a document of the wrong shape; the keys are named above
+    }
+
+    // An error the golden does not expect, still there after the last retry, fails the leg even when
+    // every must-match key agrees (a missing golden is reported below instead).
+    if (shapeGolden !== undefined && isTransientProbeFailure(parsedVal, shapeGolden)) {
+      console.error(`\n${unexpectedErrorReport(`${fixtureName} × ${cli}`, exitCode, parsedVal, shapeGolden)}`);
+      console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
+      failures++;
+      continue;
     }
 
     results[cli] = { cli, exitCode, stdout, parsed: parsedVal };
@@ -381,11 +414,14 @@ function main() {
   console.log(`  fixtures dir: ${FIXTURES_DIR}`);
   console.log(`  drift mode:   ${process.env.INTENTIONAL_DRIFT === "1" ? "ON (expect fail)" : "off"}`);
 
-  const bins: Record<CLI, string> = {
-    hma: envBinOrThrow("HMA_BIN"),
-    opena2a: envBinOrThrow("OPENA2A_BIN"),
-    "ai-trust": envBinOrThrow("AI_TRUST_BIN"),
-  };
+  const missing = missingBinMessages(process.env);
+  if (missing.length > 0) {
+    for (const line of missing) console.error(line);
+    process.exit(2);
+  }
+  const bins = Object.fromEntries(
+    Object.entries(BIN_VARS).map(([cli, name]) => [cli, process.env[name] as string]),
+  ) as Record<CLI, string>;
 
   const fixtures = readdirSync(FIXTURES_DIR).filter((n) => {
     const p = join(FIXTURES_DIR, n);

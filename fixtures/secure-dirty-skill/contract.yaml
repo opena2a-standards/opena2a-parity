@@ -12,10 +12,10 @@ participants:
   - opena2a
 
 # Fields that must be byte-identical across participating CLIs.
-# Intentionally narrow for M0 — tightens as shared extraction (M3/M4) closes
-# the known delegation drift. Today opena2a scan reports more findings than
-# hma secure on the same input (opena2a adds its own hygiene checks on top);
-# that drift is tracked, not yet closed.
+# Intentionally narrow: it tightens as moving the checks into a shared
+# package closes the known delegation drift. Today opena2a scan reports more
+# findings than hma secure on the same input (opena2a adds its own hygiene
+# checks on top); that drift is known and not yet closed.
 must_match:
   - platform
   - projectType
@@ -27,9 +27,9 @@ may_differ:
   - path: timestamp
     reason: "Wall-clock timestamps cannot match across runs. Normalized to empty string."
   - path: findings
-    reason: "Known drift: opena2a scan emits ~2x findings vs hma secure on same input (2026-04-22). Tracked for M3/M4 check-core extraction; not a current parity violation."
+    reason: "Known drift: opena2a scan emits ~2x findings vs hma secure on same input (2026-04-22). Expected to close once the checks move into a shared package; not a current parity violation."
   - path: allFindings
-    reason: "Same as findings. Tracked for M3/M4."
+    reason: "Same as findings."
   - path: semanticAnalysis
     reason: "NanoMind probabilistic output is excluded: the parity gate covers deterministic output only."
 

@@ -204,3 +204,118 @@ process.exit(1);
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// One fixture in a temporary fixtures/ root, run end to end by runFixture against a stub hma that
+// counts its invocations and always prints `payload` with `exit`. Returns the fixture's result, the
+// invocation count and every line the harness printed.
+function runStubFixture(contract: string, golden: unknown, payload: unknown, exit = 1): { rc: number; invocations: number; logged: string[] } {
+  const dir = mkdtempSync(join(tmpdir(), "parity-stub-fixture-"));
+  const fixture = join(dir, "fixtures", "stub");
+  mkdirSync(join(fixture, "expected"), { recursive: true });
+  writeFileSync(join(fixture, "contract.yaml"), contract);
+  writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify(golden));
+  const counter = join(dir, "n");
+  const bin = join(dir, "stub.mjs");
+  writeFileSync(counter, "0");
+  writeFileSync(bin, `
+import { readFileSync, writeFileSync } from "node:fs";
+const c = Number(readFileSync(${JSON.stringify(counter)}, "utf8"));
+writeFileSync(${JSON.stringify(counter)}, String(c + 1));
+console.log(${JSON.stringify(JSON.stringify(payload))});
+process.exit(${exit});
+`);
+  const logged: string[] = [];
+  const origError = console.error;
+  const origLog = console.log;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
+    return { rc, invocations: Number(readFileSync(counter, "utf8")), logged };
+  } finally {
+    console.error = origError;
+    console.log = origLog;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// check-not-found narrowed to one participant: error is under may_differ, and only name, found and
+// ecosystem are must-match keys.
+const NOT_FOUND_CONTRACT = `
+description: not-found stub
+kind: package-name
+package: ghost
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+participants:
+  - hma
+must_match:
+  - name
+  - found
+  - ecosystem
+may_differ:
+  - path: error
+    reason: wording differs between CLIs
+`;
+
+test("runFixture fails the leg when a reworded error still differs from the golden's after the last attempt", () => {
+  const reworded = { ...NOT_FOUND_GOLDEN, error: 'No package named "ghost" on npm.' };
+  const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, reworded);
+  assert.equal(r.invocations, 3);
+  // the retry log calls it a real failure, and the verdict agrees
+  assert.ok(r.logged.some((l) => /probe still failing after 3 attempts/.test(l)), r.logged.join("\n"));
+  assert.equal(r.rc, 1);
+  assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma") && l.includes('No package named \\"ghost\\" on npm.')), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
+});
+
+test("runFixture fails a not-found leg on a registry timeout that carries every must-match key", () => {
+  // name, found: false and ecosystem all match the golden; only the error says the registry was not reached
+  const timeout = { name: "ghost", found: false, error: "Registry request timed out after 10000ms", ecosystem: "npm" };
+  const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, timeout);
+  assert.equal(r.invocations, 3);
+  assert.equal(r.rc, 1);
+  assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma") && l.includes("Registry request timed out after 10000ms")), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
+});
+
+test("runFixture decides whether an error is expected on the normalized payload the golden was copied from", () => {
+  const contract = `${NOT_FOUND_CONTRACT}normalize:
+  - kind: replace_regex
+    pattern: "request-[0-9]+"
+    replacement: "<REQUEST_ID>"
+`;
+  const golden = { ...NOT_FOUND_GOLDEN, error: "ghost not found (<REQUEST_ID>)" };
+  const raw = { ...NOT_FOUND_GOLDEN, error: "ghost not found (request-4711)" };
+  const r = runStubFixture(contract, golden, raw);
+  assert.equal(r.invocations, 1);
+  assert.deepEqual(r.logged.filter((l) => /transient probe failure|still failing/.test(l)), []);
+  assert.equal(r.rc, 0);
+  assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × hma")), r.logged.join("\n"));
+});
+
+test("runFixture hands the golden to the shape check, so a must-match key the golden also omits is not a SHAPE failure", () => {
+  // check-registered-ai's ai-trust leg: scanStatus is a must-match key its golden omits on purpose
+  const contract = `
+description: registered stub
+kind: package-name
+package: "@scope/server"
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+participants:
+  - hma
+must_match:
+  - trustLevel
+  - name
+  - verdict
+  - packageType
+  - scanStatus
+may_differ: []
+`;
+  const golden = { name: "@scope/server", found: true, trustLevel: 3, verdict: "passed", packageType: "mcp_server" };
+  const r = runStubFixture(contract, golden, { ...golden, source: "registry" }, 0);
+  assert.equal(r.invocations, 1);
+  assert.ok(!r.logged.some((l) => l.includes("[SHAPE]")), r.logged.join("\n"));
+  assert.equal(r.rc, 0);
+  assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × hma: 5 must-match fields")), r.logged.join("\n"));
+});
