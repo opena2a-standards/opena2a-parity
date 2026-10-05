@@ -70,9 +70,10 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
 // smoothed, broken is still broken.
 //
 // Where the participant's golden itself carries an error (the check-not-found
-// fixtures), an error payload is the expected outcome, not a transient one: it
-// goes to the comparison on the first attempt instead of burning the retry
-// budget and logging a real failure on a run that passes.
+// fixtures), a payload carrying that same error is the expected outcome, not a
+// transient one: it goes to the comparison on the first attempt instead of
+// burning the retry budget and logging a real failure on a run that passes. A
+// different error on that fixture (a registry timeout) is still retried.
 const PROBE_RETRIES = 3;
 
 // What the retry is keyed on, in the retry's own log line, so the next reader does not assume it
@@ -94,7 +95,9 @@ function carriesError(doc: unknown): boolean {
 }
 
 export function isTransientProbeFailure(parsed: unknown, golden?: unknown): boolean {
-  return carriesError(parsed) && !carriesError(golden);
+  if (!carriesError(parsed)) return false;
+  // Only the exact error the golden records is expected; any other error is still operational.
+  return !carriesError(golden) || (parsed as { error?: unknown }).error !== (golden as { error?: unknown }).error;
 }
 
 // Runs the CLI and parses its JSON, retrying only on a transient probe failure

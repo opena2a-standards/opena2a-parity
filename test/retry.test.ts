@@ -115,3 +115,37 @@ process.exit(2);
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("isTransientProbeFailure fires on an error payload that differs from the error the golden expects", () => {
+  const timeout = { ...NOT_FOUND_GOLDEN, error: "Registry request timed out after 10000ms" };
+  assert.equal(isTransientProbeFailure(timeout, NOT_FOUND_GOLDEN), true);
+});
+
+test("probeWithRetry retries a registry timeout on a fixture whose golden expects a different error", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-notfound-timeout-"));
+  const counter = join(dir, "n");
+  const bin = join(dir, "notfound-timeout.mjs");
+  writeFileSync(counter, "0");
+  // First call emits the registry timeout shape, then the not-found payload its golden records.
+  writeFileSync(bin, `
+import { readFileSync, writeFileSync } from "node:fs";
+const c = Number(readFileSync(${JSON.stringify(counter)}, "utf8"));
+writeFileSync(${JSON.stringify(counter)}, String(c + 1));
+if (c === 0) { console.log(JSON.stringify({ name: "ghost", found: false, error: "Registry request timed out after 10000ms", ecosystem: "npm" })); process.exit(1); }
+console.log(${JSON.stringify(JSON.stringify(NOT_FOUND_GOLDEN))});
+process.exit(2);
+`);
+  const origError = console.error;
+  console.error = () => {};
+  try {
+    const r = probeWithRetry(`node ${bin} check`, null, "test not-found timeout", NOT_FOUND_GOLDEN);
+    console.error = origError;
+    assert.equal(r.parseOk, true);
+    assert.deepEqual(r.parsed, NOT_FOUND_GOLDEN);
+    // the timeout was retried once, and the recovered payload is what the comparison sees
+    assert.equal(readFileSync(counter, "utf8"), "2");
+  } finally {
+    console.error = origError;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
