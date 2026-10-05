@@ -68,6 +68,11 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
 // retried, so the gate still catches real drift. A persistent outage exhausts the
 // retries and then fails loudly through the normal comparison - transient is
 // smoothed, broken is still broken.
+//
+// Where the participant's golden itself carries an error (the check-not-found
+// fixtures), an error payload is the expected outcome, not a transient one: it
+// goes to the comparison on the first attempt instead of burning the retry
+// budget and logging a real failure on a run that passes.
 const PROBE_RETRIES = 3;
 
 // What the retry is keyed on, in the retry's own log line, so the next reader does not assume it
@@ -76,7 +81,7 @@ const PROBE_RETRIES = 3;
 // { type, score } where { found, trustLevel, verdict } were expected) is returned unretried and is
 // reported by runFixture as a SHAPE failure naming the absent keys.
 export const RETRY_CONDITION =
-  "keyed on an operational { error } payload or non-JSON output only; absent must-match keys are never retried";
+  "keyed on an operational { error } payload the golden does not expect, or non-JSON output only; absent must-match keys are never retried";
 const PROBE_BACKOFF_MS = Number(process.env.PARITY_PROBE_BACKOFF_MS ?? 1500);
 
 function syncSleep(ms: number): void {
@@ -84,22 +89,23 @@ function syncSleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-export function isTransientProbeFailure(parsed: unknown): boolean {
-  return (
-    typeof parsed === "object" &&
-    parsed !== null &&
-    "error" in parsed &&
-    Boolean((parsed as { error?: unknown }).error)
-  );
+function carriesError(doc: unknown): boolean {
+  return typeof doc === "object" && doc !== null && "error" in doc && Boolean((doc as { error?: unknown }).error);
+}
+
+export function isTransientProbeFailure(parsed: unknown, golden?: unknown): boolean {
+  return carriesError(parsed) && !carriesError(golden);
 }
 
 // Runs the CLI and parses its JSON, retrying only on a transient probe failure
-// (an operational { error } payload, or unparseable/empty output). Returns the
-// last attempt's result regardless, so the caller's comparison still runs.
+// (an operational { error } payload the golden does not expect, or
+// unparseable/empty output). Returns the last attempt's result regardless, so
+// the caller's comparison still runs.
 export function probeWithRetry(
   cmd: string,
   positionalArg: string | null,
   label: string,
+  golden?: unknown,
 ): { exitCode: number; stdout: string; parsed: unknown; parseOk: boolean } {
   let last: { exitCode: number; stdout: string; parsed: unknown; parseOk: boolean } = {
     exitCode: 1,
@@ -118,7 +124,7 @@ export function probeWithRetry(
     }
     last = { exitCode, stdout, parsed, parseOk };
 
-    const transient = !parseOk || isTransientProbeFailure(parsed);
+    const transient = !parseOk || isTransientProbeFailure(parsed, golden);
     if (!transient || attempt === PROBE_RETRIES) {
       if (transient && attempt === PROBE_RETRIES) {
         console.error(
@@ -293,7 +299,11 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     } else {
       positionalArg = inputDir;
     }
-    const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`);
+    // The golden decides which error payloads are expected and which absences are shape failures;
+    // a missing golden is reported below.
+    const shapeGoldenPath = join(expectedDir, `${cli}.json`);
+    const shapeGolden = existsSync(shapeGoldenPath) ? JSON.parse(readFileSync(shapeGoldenPath, "utf8")) : undefined;
+    const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden);
     if (!parseOk) {
       console.error(`[${fixtureName}] ${cli} produced non-JSON output (exit=${exitCode}). First 400 chars:\n${stdout.slice(0, 400)}`);
       failures++;
@@ -306,12 +316,9 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     const actualPath = join(ACTUAL_DIR, fixtureName, `${cli}.json`);
     writeFileSync(actualPath, stableStringify(parsedVal));
 
-    // The golden decides which absences are shape failures; a missing golden is reported below.
-    const shapeGoldenPath = join(expectedDir, `${cli}.json`);
-    const shapeGolden = existsSync(shapeGoldenPath) ? JSON.parse(readFileSync(shapeGoldenPath, "utf8")) : undefined;
     const absent = absentMustMatchKeys(parsedVal, contract.must_match, shapeGolden);
     if (absent.length > 0) {
-      const errorField = isTransientProbeFailure(parsedVal) ? (parsedVal as { error?: unknown }).error : undefined;
+      const errorField = isTransientProbeFailure(parsedVal, shapeGolden) ? (parsedVal as { error?: unknown }).error : undefined;
       console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, contract.must_match.length, errorField)}`);
       console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
       failures += absent.length;
