@@ -1,5 +1,15 @@
+# Secret-shaped files are never committed outside the fixtures.
+.env
+secrets.json
+*.pem
+*.key
+# Fixture inputs are deliberately insecure test data and are always tracked: this re-include
+# overrides the rules above and any contributor-local ignore rule under fixtures/.
+!/fixtures/**
+# Dependencies, logs and OS metadata stay ignored everywhere, fixtures included.
 node_modules/
 *.log
 .DS_Store
+# Harness run output, and the CLI checkouts the CI workflow creates.
 /actual/
-/tmp-checkouts/
+/ext/

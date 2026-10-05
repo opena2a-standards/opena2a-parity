@@ -1,13 +1,10 @@
 # opena2a-parity
 
-Cross-CLI parity gate for the opena2a-org CLI fleet: `hackmyagent`, `opena2a`, `ai-trust`.
+Parity gate for the three OpenA2A CLIs: `hackmyagent`, `opena2a` and `ai-trust`.
 
 ## Why this exists
 
-The CLI consolidation plan (CA-034 / CPO-019, committed 2026-04-22) extracts scan, trust lookup, and rendering into shared packages so one change propagates to all three CLIs. This repo provides the CI gate that proves identical output on identical input across the fleet. When a shared-package change lands in any CLI, this harness runs against every fixture and fails the PR if output drifts on a contract-tracked field.
-
-Parent brief: `opena2a-org/briefs/cli-consolidation.md`
-Addendum: `opena2a-org/briefs/cli-consolidation-parity-gate.md`
+The three CLIs overlap: `opena2a` passes `scan` and `check` through to `hackmyagent`, and scan, trust lookup and rendering are being moved into packages the three CLIs share, so that one change reaches all three. This repo provides the CI gate that proves identical output on identical input across the three CLIs. When a shared-package change lands in any CLI, this harness runs against every fixture and fails the PR if output drifts on a contract-tracked field.
 
 ## Quickstart
 
@@ -27,7 +24,7 @@ In CI, the workflow sets these env vars from freshly-built CLIs and calls the sa
 src/run-parity.ts                    harness (Node 24, --experimental-strip-types)
 fixtures/
   secure-dirty-skill/
-    input/                           directory under test (synced from opena2a-org/test/hma/)
+    input/                           directory under test (a deliberately insecure sample project)
     contract.yaml                    must-match / may-differ rules for this fixture
     expected/
       hma.json                       golden output
@@ -49,7 +46,10 @@ See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 
 ## Adding a fixture
 
-1. Create `fixtures/<name>/input/` with the input artefacts.
+1. Create `fixtures/<name>/input/` with the input artefacts. The root `.gitignore` re-includes
+   everything under `fixtures/`, so a contributor-local ignore rule cannot hide an input; an
+   input's own `.gitignore` still applies inside the fixture, so add the files it lists with
+   `git add -f`. Check `git status` shows every input before committing.
 2. Run all three CLIs manually against it; save stable outputs under `fixtures/<name>/expected/`.
 3. Write `contract.yaml` naming what must match and what may differ (with reasons).
 4. Open a PR; CI runs the harness against your new fixture.
@@ -79,17 +79,33 @@ Ordering the other way (CLI merges first, golden follows) leaves the consumer's 
 red on parity until the golden lands. If a re-baseline ever costs more than a day,
 record the measurement and reopen the ordering decision.
 
+A consumer's parity job also runs this repo's harness unit tests (`npm test`) from
+`main`, so a unit test that fails on `main` turns every consumer's parity leg red.
+`test/ignore-file.test.ts` checks only this repo's own ignore rules, so it skips itself
+when `GITHUB_REPOSITORY` names another repository; the remaining unit tests cover the
+harness that consumers run and stay on everywhere. A `.gitignore` change lands together
+with its `EXPECTED_RULES` update in that test.
+
 ## Intentional-drift demo
 
 `npm run parity:drift-demo` — sets `INTENTIONAL_DRIFT=1`, which the harness applies by mutating one must-match field in the captured output. Expected exit code: non-zero with a clear diff. Used to prove the gate is live.
 
-## Chief decisions
+## Scanning this repository
 
-- [CA-034] Option A (three CLIs, shared packages, parity gate). Option B (one CLI) held as rollback. See memory `project_ca_034_cli_consolidation_option_a.md`.
-- [CA-035] Harness lives in a standalone private repo (this one), not inside `opena2a` monorepo, not inside a CLI. Rationale: preserves independent release cadences (parent brief line 174) and gives CI a globally checkoutable location.
+The fixture inputs are deliberately insecure test data, so a `hackmyagent secure` scan of
+the repository root reports their findings. One of them is accepted for this repository:
+GIT-002 names the two key files under `fixtures/secure-dirty-skill/input/` as committable.
+They must stay tracked for the fixture to mean anything, which is why the root `.gitignore`
+re-includes everything under `fixtures/` after ignoring `.env`, `secrets.json`, `*.pem` and
+`*.key` everywhere else. Any GIT-002 file outside `fixtures/` is a real finding.
+
+## Design decisions
+
+- Three CLIs that share packages, with this gate proving they agree. Merging them into a single CLI was the alternative considered; it is kept as the rollback.
+- The harness lives in its own public repository, not inside the `opena2a` monorepo and not inside a CLI. Each CLI keeps its own release cadence, and the CI of every CLI repository can check this one out.
 
 ## Status
 
-**M0 MVP** — harness + 1 fixture + intentional-drift test + CI wiring in 4 repos. See `opena2a-org/todo/2026-04-22-cli-consolidation-sequenced.md` for the full plan.
+The harness, the intentional-drift self-test and the reusable CI workflow are in place. Fixtures: `check-not-found`, `check-registered-ai`, `check-registered-ai-pypi`, `scan-soul-hardened`, `secure-dirty-skill`, `secure-empty-dir`.
 
-Follow-up milestones (M1-M4) add the remaining 7 fixtures, skew detector, self-learning intake, and parity dashboard.
+Planned: more fixtures, a version-skew detector and a parity dashboard.
