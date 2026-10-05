@@ -70,9 +70,10 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
 // smoothed, broken is still broken.
 //
 // Where the participant's golden itself carries an error (the check-not-found
-// fixtures), an error payload is the expected outcome, not a transient one: it
-// goes to the comparison on the first attempt instead of burning the retry
-// budget and logging a real failure on a run that passes.
+// fixtures), a payload carrying that same error is the expected outcome, not a
+// transient one: it goes to the comparison on the first attempt instead of
+// burning the retry budget and logging a real failure on a run that passes. A
+// different error on that fixture (a registry timeout) is still retried.
 const PROBE_RETRIES = 3;
 
 // What the retry is keyed on, in the retry's own log line, so the next reader does not assume it
@@ -94,7 +95,9 @@ function carriesError(doc: unknown): boolean {
 }
 
 export function isTransientProbeFailure(parsed: unknown, golden?: unknown): boolean {
-  return carriesError(parsed) && !carriesError(golden);
+  if (!carriesError(parsed)) return false;
+  // Only the exact error the golden records is expected; any other error is still operational.
+  return !carriesError(golden) || (parsed as { error?: unknown }).error !== (golden as { error?: unknown }).error;
 }
 
 // Runs the CLI and parses its JSON, retrying only on a transient probe failure
@@ -256,8 +259,14 @@ function diffKey(actual: unknown, golden: unknown, path: string): string | null 
   return `  at ${path}:\n    expected: ${gj}\n    actual:   ${aj}`;
 }
 
-function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
-  const fixtureDir = join(FIXTURES_DIR, fixtureName);
+// Exported, with the two roots overridable, so a unit test can drive one fixture end to end
+// against a stub CLI in a temporary directory instead of the repository's own fixtures/ and actual/.
+export function runFixture(
+  fixtureName: string,
+  bins: Record<CLI, string>,
+  dirs: { fixtures: string; actual: string } = { fixtures: FIXTURES_DIR, actual: ACTUAL_DIR },
+): number {
+  const fixtureDir = join(dirs.fixtures, fixtureName);
   const inputDir = join(fixtureDir, "input");
   const contractPath = join(fixtureDir, "contract.yaml");
   const expectedDir = join(fixtureDir, "expected");
@@ -278,7 +287,7 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     return 2;
   }
 
-  mkdirSync(join(ACTUAL_DIR, fixtureName), { recursive: true });
+  mkdirSync(join(dirs.actual, fixtureName), { recursive: true });
 
   const results: Record<string, ProbeResult> = {};
   let failures = 0;
@@ -313,7 +322,7 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     parsedVal = normalize(parsedVal, contract.normalize ?? [], kind === "directory" ? inputDir : "");
     parsedVal = applyIntentionalDrift(parsedVal, cli);
 
-    const actualPath = join(ACTUAL_DIR, fixtureName, `${cli}.json`);
+    const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
     writeFileSync(actualPath, stableStringify(parsedVal));
 
     const absent = absentMustMatchKeys(parsedVal, contract.must_match, shapeGolden);

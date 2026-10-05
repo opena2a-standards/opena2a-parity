@@ -1,7 +1,8 @@
 description: >
   Trust-level parity on a known Tier-1 registered MCP server. The Registry
   returns a single canonical trust level; each CLI must expose it identically
-  via its JSON output. Closes F1 from briefs/check-command-divergence.md.
+  via its JSON output, so the CLIs cannot report different trust levels for
+  the same package.
 kind: package-name
 package: "@modelcontextprotocol/server-filesystem"
 

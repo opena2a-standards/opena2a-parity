@@ -5,8 +5,8 @@ description: >
   human-facing error string and the next-step hint are intentionally CLI-
   specific (ai-trust: nextSteps array, hma/opena2a: errorHint string) and
   excluded from must_match. Exit codes also diverge intentionally: hma=1
-  (security-tool findings convention), ai-trust=2 (semantic outcome, per
-  briefs/cli-telemetry-success-semantics.md and [CHIEF-CSR-018]), opena2a=1
+  (security-tool findings convention), ai-trust=2 (a package that does not
+  exist is a semantic outcome of the lookup, not a findings result), opena2a=1
   (inherits hma via spawn delegation). The current harness does not assert
   exit codes; documenting the divergence here so a future exit-code parity
   gate has the rationale.

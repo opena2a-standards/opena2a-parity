@@ -14,8 +14,8 @@ participants:
 # Fields that must be byte-identical across participating CLIs.
 # Intentionally narrow for M0 — tightens as shared extraction (M3/M4) closes
 # the known delegation drift. Today opena2a scan reports more findings than
-# hma secure on the same input (matches 2026-04-22 memory on opena2a hygiene
-# overlay); that drift is tracked, not yet closed.
+# hma secure on the same input (opena2a adds its own hygiene checks on top);
+# that drift is tracked, not yet closed.
 must_match:
   - platform
   - projectType
@@ -31,7 +31,7 @@ may_differ:
   - path: allFindings
     reason: "Same as findings. Tracked for M3/M4."
   - path: semanticAnalysis
-    reason: "NanoMind probabilistic output excluded from parity gate per cli-consolidation.md line 103 (parity covers deterministic core only)."
+    reason: "NanoMind probabilistic output is excluded: the parity gate covers deterministic output only."
 
 # Normalization applied before diff. Order matters.
 normalize:

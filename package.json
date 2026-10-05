@@ -2,7 +2,7 @@
   "name": "opena2a-parity",
   "version": "0.1.0-pre",
   "private": true,
-  "description": "Cross-CLI parity gate for the opena2a-org CLI fleet (hackmyagent, opena2a, ai-trust).",
+  "description": "Parity gate for the three OpenA2A CLIs: hackmyagent, opena2a and ai-trust.",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"

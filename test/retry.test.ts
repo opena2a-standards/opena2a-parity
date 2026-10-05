@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isTransientProbeFailure, probeWithRetry } from "../src/run-parity.ts";
+import { isTransientProbeFailure, probeWithRetry, runFixture } from "../src/run-parity.ts";
 
 test("isTransientProbeFailure fires only on an operational error payload", () => {
   // the exact timeout shape ai-trust emits
@@ -112,6 +112,95 @@ process.exit(2);
     assert.deepEqual(logged, []);
   } finally {
     console.error = origError;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("isTransientProbeFailure fires on an error payload that differs from the error the golden expects", () => {
+  const timeout = { ...NOT_FOUND_GOLDEN, error: "Registry request timed out after 10000ms" };
+  assert.equal(isTransientProbeFailure(timeout, NOT_FOUND_GOLDEN), true);
+});
+
+test("probeWithRetry retries a registry timeout on a fixture whose golden expects a different error", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-notfound-timeout-"));
+  const counter = join(dir, "n");
+  const bin = join(dir, "notfound-timeout.mjs");
+  writeFileSync(counter, "0");
+  // First call emits the registry timeout shape, then the not-found payload its golden records.
+  writeFileSync(bin, `
+import { readFileSync, writeFileSync } from "node:fs";
+const c = Number(readFileSync(${JSON.stringify(counter)}, "utf8"));
+writeFileSync(${JSON.stringify(counter)}, String(c + 1));
+if (c === 0) { console.log(JSON.stringify({ name: "ghost", found: false, error: "Registry request timed out after 10000ms", ecosystem: "npm" })); process.exit(1); }
+console.log(${JSON.stringify(JSON.stringify(NOT_FOUND_GOLDEN))});
+process.exit(2);
+`);
+  const origError = console.error;
+  console.error = () => {};
+  try {
+    const r = probeWithRetry(`node ${bin} check`, null, "test not-found timeout", NOT_FOUND_GOLDEN);
+    console.error = origError;
+    assert.equal(r.parseOk, true);
+    assert.deepEqual(r.parsed, NOT_FOUND_GOLDEN);
+    // the timeout was retried once, and the recovered payload is what the comparison sees
+    assert.equal(readFileSync(counter, "utf8"), "2");
+  } finally {
+    console.error = origError;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runFixture hands the participant's golden to the probe, so an expected not-found is compared on the first attempt", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-fixture-"));
+  const fixtures = join(dir, "fixtures");
+  const actual = join(dir, "actual");
+  const fixture = join(fixtures, "check-not-found");
+  mkdirSync(join(fixture, "expected"), { recursive: true });
+  // The shape of the real check-not-found contract, narrowed to one participant.
+  writeFileSync(join(fixture, "contract.yaml"), `
+description: not-found stub
+kind: package-name
+package: ghost
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+participants:
+  - hma
+must_match:
+  - name
+  - found
+  - ecosystem
+may_differ: []
+`);
+  writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify(NOT_FOUND_GOLDEN));
+  const counter = join(dir, "n");
+  const bin = join(dir, "notfound.mjs");
+  writeFileSync(counter, "0");
+  // Counts its invocations and always emits the payload the golden records, with a non-zero exit.
+  writeFileSync(bin, `
+import { readFileSync, writeFileSync } from "node:fs";
+const c = Number(readFileSync(${JSON.stringify(counter)}, "utf8"));
+writeFileSync(${JSON.stringify(counter)}, String(c + 1));
+console.log(${JSON.stringify(JSON.stringify(NOT_FOUND_GOLDEN))});
+process.exit(1);
+`);
+  const logged: string[] = [];
+  const origError = console.error;
+  const origLog = console.log;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    const rc = runFixture("check-not-found", { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" }, { fixtures, actual });
+    console.error = origError;
+    console.log = origLog;
+    assert.equal(rc, 0);
+    // exactly one invocation: without the golden the probe reads the error payload as transient and retries it
+    assert.equal(readFileSync(counter, "utf8"), "1");
+    assert.deepEqual(logged.filter((l) => /transient probe failure|still failing/.test(l)), []);
+    assert.ok(logged.some((l) => l.startsWith("[OK]   check-not-found × hma")), logged.join("\n"));
+    assert.ok(existsSync(join(actual, "check-not-found", "hma.json")));
+  } finally {
+    console.error = origError;
+    console.log = origLog;
     rmSync(dir, { recursive: true, force: true });
   }
 });
