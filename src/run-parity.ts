@@ -259,8 +259,14 @@ function diffKey(actual: unknown, golden: unknown, path: string): string | null 
   return `  at ${path}:\n    expected: ${gj}\n    actual:   ${aj}`;
 }
 
-function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
-  const fixtureDir = join(FIXTURES_DIR, fixtureName);
+// Exported, with the two roots overridable, so a unit test can drive one fixture end to end
+// against a stub CLI in a temporary directory instead of the repository's own fixtures/ and actual/.
+export function runFixture(
+  fixtureName: string,
+  bins: Record<CLI, string>,
+  dirs: { fixtures: string; actual: string } = { fixtures: FIXTURES_DIR, actual: ACTUAL_DIR },
+): number {
+  const fixtureDir = join(dirs.fixtures, fixtureName);
   const inputDir = join(fixtureDir, "input");
   const contractPath = join(fixtureDir, "contract.yaml");
   const expectedDir = join(fixtureDir, "expected");
@@ -281,7 +287,7 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     return 2;
   }
 
-  mkdirSync(join(ACTUAL_DIR, fixtureName), { recursive: true });
+  mkdirSync(join(dirs.actual, fixtureName), { recursive: true });
 
   const results: Record<string, ProbeResult> = {};
   let failures = 0;
@@ -316,7 +322,7 @@ function runFixture(fixtureName: string, bins: Record<CLI, string>): number {
     parsedVal = normalize(parsedVal, contract.normalize ?? [], kind === "directory" ? inputDir : "");
     parsedVal = applyIntentionalDrift(parsedVal, cli);
 
-    const actualPath = join(ACTUAL_DIR, fixtureName, `${cli}.json`);
+    const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
     writeFileSync(actualPath, stableStringify(parsedVal));
 
     const absent = absentMustMatchKeys(parsedVal, contract.must_match, shapeGolden);
