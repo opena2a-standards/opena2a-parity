@@ -14,7 +14,8 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const DOCUMENT_PATH = /[\w./~-]+\.(?:md|mdx|markdown|rst|adoc|txt|pdf|docx?)(?![\w])/g;
 const TICKET_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g;
 // A milestone code followed by a chip tier, "chip" or "score" is an Apple silicon chip (M4 Max) or the F1 score.
-const MILESTONE_CODE = /\b[MF]\d+\b(?![ -](?:Pro|Max|Ultra|chip|[Ss]core)\b)/g;
+// The word may follow one hyphen or any run of spaces, start upper- or lower-case, and be plural.
+const MILESTONE_CODE = /\b[MF]\d+\b(?!(?: +|-)(?:[Pp]ros?|[Mm]ax(?:es)?|[Uu]ltras?|[Cc]hips?|[Ss]cores?)\b)/g;
 
 // Public technical names that share a ticket key's shape: character encodings, hash, cipher and key
 // sizes, elliptic curves and checksums. ISO-8859-1 matches as ISO-8859.
@@ -117,6 +118,11 @@ test("encodings, hash and cipher sizes, curves, chip names and the F1 score are 
       readme,
       new Set(),
     ),
+    [],
+  );
+  // plurals, lower-case tier and score words, and more than one space before them
+  assert.deepEqual(
+    unreadableCitations("F1 scores, M1 pro, M3 ultra, M4  Max, M2 Pros, M1 Maxes, M3 chips and an M4-max.", readme, new Set()),
     [],
   );
   // the same shapes still report when nothing marks them as a technical name
