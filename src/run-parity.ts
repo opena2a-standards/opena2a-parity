@@ -274,11 +274,17 @@ function diffKey(actual: unknown, golden: unknown, path: string): string | null 
 
 // The verdict for an error payload the golden does not expect that outlasted every retry. The probe
 // has already logged it as a real failure; this line makes the leg's result say the same.
+//
+// A golden without an error has none for the payload to differ from, so that case is named as
+// such rather than diffed against an "expected: undefined".
 export function unexpectedErrorReport(label: string, exitCode: number, actual: unknown, golden: unknown): string {
+  const goldenHasError = carriesError(golden);
   return [
-    `[FAIL] ${label}: exit=${exitCode}, error payload still differs from the golden's after ${PROBE_RETRIES} attempts`,
-    diffKey(actual, golden, "error"),
-    `  An unreachable registry fails here even when the must-match fields agree. A reworded error is an`,
+    goldenHasError
+      ? `[FAIL] ${label}: exit=${exitCode}, error payload still differs from the golden's after ${PROBE_RETRIES} attempts`
+      : `[FAIL] ${label}: exit=${exitCode}, error payload still present after ${PROBE_RETRIES} attempts; the golden records no error`,
+    goldenHasError ? diffKey(actual, golden, "error") : `  at error:\n    actual:   ${JSON.stringify(getPath(actual, "error"))}`,
+    `  An unreachable registry fails here even when the must-match fields agree. A ${goldenHasError ? "reworded" : "new"} error is an`,
     `  intended output change: re-baseline golden-first (README.md "Re-baselining goldens").`,
   ].join("\n");
 }
