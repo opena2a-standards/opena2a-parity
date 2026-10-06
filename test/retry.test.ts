@@ -279,6 +279,26 @@ test("runFixture fails the leg when a reworded error still differs from the gold
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
 });
 
+test("the unexpected-error report offers re-baselining as a conditional, not a verdict that the error is intended", () => {
+  // the golden records no error and the CLI prints one on every attempt: a regression reads the same way
+  const report = unexpectedErrorReport("stub × hma", 1, { name: "ghost", found: true, error: "TypeError: x is undefined" }, { name: "ghost", found: true });
+  // a golden that records an error gets the same conditional for a reworded one
+  const reworded = unexpectedErrorReport("stub × hma", 1, { name: "ghost", found: true, error: "TypeError: x is undefined" }, { name: "ghost", found: true, error: "gone" });
+  for (const [kind, r] of [["new", report], ["reworded", reworded]] as const) {
+    assert.ok(r.startsWith("[FAIL] stub × hma"), r);
+    assert.doesNotMatch(r, /intended output change:/, r);
+    // the advice wraps across lines, so read it as one sentence
+    assert.match(
+      r.replace(/\n\s+/g, " "),
+      new RegExp(
+        `A ${kind} error is an intended output change only if the CLI now reports it on purpose: if so, re-baseline golden-first ` +
+          `\\(README\\.md "Re-baselining goldens"\\); if not, it is a CLI regression and the golden stays as it is\\.$`,
+      ),
+      r,
+    );
+  }
+});
+
 test("runFixture fails a not-found leg on a registry timeout that carries every must-match key", () => {
   // name, found: false and ecosystem all match the golden; only the error says the registry was not reached
   const timeout = { name: "ghost", found: false, error: "Registry request timed out after 10000ms", ecosystem: "npm" };

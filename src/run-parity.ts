@@ -300,7 +300,8 @@ export function unexpectedErrorReport(label: string, exitCode: number, actual: u
       : `[FAIL] ${label}: exit=${exitCode}, error payload still present after ${PROBE_RETRIES} attempts; the golden records no error`,
     goldenHasError ? diffKey(actual, golden, "error") : `  at error:\n    actual:   ${canonicalJson(getPath(actual, "error"))}`,
     `  An unreachable registry fails here even when the must-match fields agree. A ${goldenHasError ? "reworded" : "new"} error is an`,
-    `  intended output change: re-baseline golden-first (README.md "Re-baselining goldens").`,
+    `  intended output change only if the CLI now reports it on purpose: if so, re-baseline golden-first`,
+    `  (README.md "Re-baselining goldens"); if not, it is a CLI regression and the golden stays as it is.`,
   ].join("\n");
 }
 
