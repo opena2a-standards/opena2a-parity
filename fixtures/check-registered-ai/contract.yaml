@@ -13,7 +13,7 @@ exercises:
   # accept `--no-scan` passthrough (commander arity on the `check [target]`
   # argument), so the parity exercise runs the default local-scan path via
   # `--format json`. Since hackmyagent >=0.18.3 emits registry fields at
-  # top level on the local-scan path too (F1 fix), the must_match fields
+  # top level on the local-scan path too, the must_match fields
   # still agree across all three CLIs.
   opena2a: "{BIN} check {PACKAGE} --format json"
 
@@ -22,11 +22,11 @@ participants:
   - ai-trust
   - opena2a
 
-# Fields that must be byte-identical across participating CLIs. Expanded in
-# M2 Day-2 now that hackmyagent >=0.18.3 surfaces registry fields on the
-# default local-scan path — opena2a (which delegates to hackmyagent) inherits
-# the same shape. Richer parity (full render-layer byte equality) arrives
-# with M3 (check-core output schema).
+# Fields that must be byte-identical across participating CLIs. The set grew
+# once hackmyagent >=0.18.3 surfaced registry fields on the default
+# local-scan path — opena2a (which delegates to hackmyagent) inherits the
+# same shape. Full render-layer byte equality needs a check output schema
+# the three CLIs share; this contract does not assert it yet.
 must_match:
   - trustLevel
   - name
@@ -54,11 +54,11 @@ may_differ:
   - path: source
     reason: "hma emits 'source: registry' on --no-scan, 'source: local-scan' on default; opena2a always shows local-scan via delegation. ai-trust >=0.7.6 emits 'source: registry' in the curated shape."
   - path: found
-    reason: "Both compute this client-side; deterministic but not contractual in M2."
+    reason: "Both compute this client-side; deterministic, but not part of this contract."
   - path: dependencies
-    reason: "Structure differs slightly between CLIs; M3 render surface unifies."
+    reason: "Structure differs slightly between CLIs until they share a render layer."
   - path: securityProfile
-    reason: "ai-trust surfaces full securityProfile; hma doesn't. Render-surface concern for M3."
+    reason: "ai-trust surfaces full securityProfile; hma doesn't. A rendering difference, not a trust-level one."
   - path: factors
     reason: "ai-trust-only detail — scoring breakdown."
   - path: scoreBreakdown

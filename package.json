@@ -13,7 +13,7 @@
     "test": "PARITY_PROBE_BACKOFF_MS=1 node --experimental-strip-types --test \"test/*.test.ts\""
   },
   "dependencies": {
-    "yaml": "2.5.1"
+    "yaml": "2.9.1"
   },
   "repository": {
     "type": "git",

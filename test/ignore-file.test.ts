@@ -9,8 +9,10 @@ import { fileURLToPath } from "node:url";
 // The committed ignore file covers what working in this repository produces: installed
 // dependencies, logs, OS metadata, the harness's run output (actual/) and the CLI checkouts the CI
 // workflow creates (ext/). It also ignores the secret-shaped names a hackmyagent scan of the
-// repository root expects (GIT-002), and re-includes every fixture input so that neither those
-// rules nor a contributor-local rule can hide a fixture input from git. Exclusions for a
+// repository root expects (GIT-002), and re-includes paths under fixtures/ so that neither those
+// rules nor a contributor-local rule matching a file there can hide a fixture input from git. It
+// cannot re-include an input under a directory a local rule excludes (fixtures/ itself), and the
+// node_modules/, *.log and .DS_Store rules still apply inside fixtures/. Exclusions for a
 // contributor's personal editor or tooling state belong in that contributor's .git/info/exclude or
 // global ignore file, not here. Adding a rule is a deliberate change to this list.
 
@@ -81,6 +83,7 @@ test("git ignores run output and checkouts, and contributor-local rules cannot h
       ".env",
       "server.key",
       "fixtures/example/input/node_modules/pkg/index.js",
+      "fixtures/example/input/debug.log",
       "fixtures/example/input/.DS_Store",
     ]) {
       assert.equal(ignored(path), true, `${path} should be ignored`);

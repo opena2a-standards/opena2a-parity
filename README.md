@@ -44,12 +44,22 @@ fixtures/
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 
+An `error` in a CLI's output is checked against that CLI's own golden, after normalization,
+even where the contract lists `error` under `may_differ` (which lets the wording differ between
+CLIs). An error the golden does not record is retried up to three times, and if it still differs
+after the last attempt the leg fails: on `check-not-found` a registry timeout carries the same
+`name`, `found` and `ecosystem` as a real not-found, so the error is what tells them apart. A CLI
+that rewords its error re-baselines its golden first, like any other intended output change.
+
 ## Adding a fixture
 
 1. Create `fixtures/<name>/input/` with the input artefacts. The root `.gitignore` re-includes
-   everything under `fixtures/`, so a contributor-local ignore rule cannot hide an input; an
-   input's own `.gitignore` still applies inside the fixture, so add the files it lists with
-   `git add -f`. Check `git status` shows every input before committing.
+   paths under `fixtures/`, so its secret-file rules and a contributor-local rule that matches a
+   file there do not hide an input. Three cases still do, and need `git add -f`: inputs matching
+   `node_modules/`, `*.log` or `.DS_Store`, which stay ignored under `fixtures/` too; files an
+   input's own `.gitignore` lists; and every input, if a contributor-local rule ignores the
+   `fixtures` directory itself (git cannot re-include a file whose parent directory is excluded).
+   Check `git status` shows every input before committing.
 2. Run all three CLIs manually against it; save stable outputs under `fixtures/<name>/expected/`.
 3. Write `contract.yaml` naming what must match and what may differ (with reasons).
 4. Open a PR; CI runs the harness against your new fixture.
@@ -81,10 +91,10 @@ record the measurement and reopen the ordering decision.
 
 A consumer's parity job also runs this repo's harness unit tests (`npm test`) from
 `main`, so a unit test that fails on `main` turns every consumer's parity leg red.
-`test/ignore-file.test.ts` checks only this repo's own ignore rules, so it skips itself
-when `GITHUB_REPOSITORY` names another repository; the remaining unit tests cover the
-harness that consumers run and stay on everywhere. A `.gitignore` change lands together
-with its `EXPECTED_RULES` update in that test.
+The two checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
+`GITHUB_REPOSITORY` names another repository; that file's two tests of its helper functions,
+and the remaining unit tests, which cover the harness that consumers run, stay on everywhere.
+A `.gitignore` change lands together with its `EXPECTED_RULES` update in that test.
 
 ## Intentional-drift demo
 
@@ -96,8 +106,9 @@ The fixture inputs are deliberately insecure test data, so a `hackmyagent secure
 the repository root reports their findings. One of them is accepted for this repository:
 GIT-002 names the two key files under `fixtures/secure-dirty-skill/input/` as committable.
 They must stay tracked for the fixture to mean anything, which is why the root `.gitignore`
-re-includes everything under `fixtures/` after ignoring `.env`, `secrets.json`, `*.pem` and
-`*.key` everywhere else. Any GIT-002 file outside `fixtures/` is a real finding.
+ignores `.env`, `secrets.json`, `*.pem` and `*.key` and then re-includes paths under
+`fixtures/`, so those four rules do not apply there. Any GIT-002 file outside `fixtures/` is a
+real finding.
 
 ## Design decisions
 
