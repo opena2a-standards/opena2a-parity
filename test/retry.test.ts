@@ -207,13 +207,20 @@ process.exit(1);
 
 // One fixture in a temporary fixtures/ root, run end to end by runFixture against a stub hma that
 // counts its invocations and always prints `payload` with `exit`. Returns the fixture's result, the
-// invocation count and every line the harness printed.
-function runStubFixture(contract: string, golden: unknown, payload: unknown, exit = 1): { rc: number; invocations: number; logged: string[] } {
+// invocation count, every line the harness printed and the capture it wrote (undefined if none).
+// `encode` turns the golden and the payload into JSON text; `String` hands over text as it is.
+function runStubFixture(
+  contract: string,
+  golden: unknown,
+  payload: unknown,
+  exit = 1,
+  encode: (value: unknown) => string = (value) => JSON.stringify(value),
+): { rc: number; invocations: number; logged: string[]; capture: string | undefined } {
   const dir = mkdtempSync(join(tmpdir(), "parity-stub-fixture-"));
   const fixture = join(dir, "fixtures", "stub");
   mkdirSync(join(fixture, "expected"), { recursive: true });
   writeFileSync(join(fixture, "contract.yaml"), contract);
-  writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify(golden));
+  writeFileSync(join(fixture, "expected", "hma.json"), encode(golden));
   const counter = join(dir, "n");
   const bin = join(dir, "stub.mjs");
   writeFileSync(counter, "0");
@@ -221,8 +228,9 @@ function runStubFixture(contract: string, golden: unknown, payload: unknown, exi
 import { readFileSync, writeFileSync } from "node:fs";
 const c = Number(readFileSync(${JSON.stringify(counter)}, "utf8"));
 writeFileSync(${JSON.stringify(counter)}, String(c + 1));
-console.log(${JSON.stringify(JSON.stringify(payload))});
-process.exit(${exit});
+console.log(${JSON.stringify(encode(payload))});
+// exitCode rather than exit(): a pipe is written asynchronously on macOS, and exit() can cut a long payload short.
+process.exitCode = ${exit};
 `);
   const logged: string[] = [];
   const origError = console.error;
@@ -231,7 +239,9 @@ process.exit(${exit});
   console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   try {
     const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
-    return { rc, invocations: Number(readFileSync(counter, "utf8")), logged };
+    const capturePath = join(dir, "actual", "stub", "hma.json");
+    const capture = existsSync(capturePath) ? readFileSync(capturePath, "utf8") : undefined;
+    return { rc, invocations: Number(readFileSync(counter, "utf8")), logged, capture };
   } finally {
     console.error = origError;
     console.log = origLog;
@@ -295,7 +305,7 @@ test("runFixture passes a leg on the first attempt when its object-valued error 
   assert.ok(!r.logged.some((l) => l.includes("[FAIL]")), r.logged.join("\n"));
 });
 
-// Goldens are written with sorted keys; a CLI emits its own key order. The same error in another order is the same error.
+// A golden copied from a capture has sorted keys; a CLI emits its own order. The same error in another order is the same error.
 const REORDERED_OBJECT_ERROR = { ...OBJECT_ERROR_GOLDEN, error: { message: "ghost", code: "NOT_FOUND" } };
 
 test("isTransientProbeFailure matches an object-valued error whose keys are in a different order from the golden's", () => {
@@ -347,6 +357,8 @@ may_differ: []
   assert.equal(r.rc, 1, r.logged.join("\n"));
   assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma") && l.includes("1 must-match field(s) drifted")), r.logged.join("\n"));
   assert.ok(r.logged.some((l) => l.includes("__proto__")), r.logged.join("\n"));
+  // the capture records the key too, so a re-baseline copies what the CLI emitted
+  assert.deepEqual(JSON.parse(r.capture ?? "null"), payload);
 });
 
 test("runFixture compares an object-valued must-match key regardless of key order", () => {
@@ -366,11 +378,75 @@ may_differ: []
   const golden = { name: "ghost", scores: { a: 1, b: { c: 2, d: 3 } } };
   const r = runStubFixture(contract, golden, { scores: { b: { d: 3, c: 2 }, a: 1 }, name: "ghost" }, 0);
   assert.equal(r.rc, 0, r.logged.join("\n"));
-  assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × hma: 2 must-match fields")), r.logged.join("\n"));
+  // the line says what was compared: equality apart from key order, not identical bytes
+  assert.ok(r.logged.includes("[OK]   stub × hma: 2 must-match fields equal apart from object key order"), r.logged.join("\n"));
   // a changed value in the same reordered object is still drift
   const drift = runStubFixture(contract, golden, { scores: { b: { d: 4, c: 2 }, a: 1 }, name: "ghost" }, 0);
   assert.equal(drift.rc, 1, drift.logged.join("\n"));
   assert.ok(drift.logged.some((l) => l.includes("[FAIL] stub × hma: 1 must-match field(s) drifted")), drift.logged.join("\n"));
+});
+
+// name and scores as must-match keys, scores holding an object.
+const SCORES_CONTRACT = `
+description: object-valued must-match stub
+kind: package-name
+package: ghost
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+participants:
+  - hma
+must_match:
+  - name
+  - scores
+may_differ: []
+`;
+
+test("runFixture keeps a __proto__ key through a replace_regex rule, in the comparison and in the capture", () => {
+  const contract = `${SCORES_CONTRACT}normalize:
+  - kind: replace_regex
+    pattern: "request-[0-9]+"
+    replacement: "<REQUEST_ID>"
+`;
+  const golden = { name: "ghost", scores: { a: 1 } };
+  const payload = JSON.parse('{"name":"ghost","scores":{"a":1,"__proto__":{"admin":true}}}');
+  const r = runStubFixture(contract, golden, payload, 0);
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma: 1 must-match field(s) drifted")), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes('"__proto__":{"admin":true}')), r.logged.join("\n"));
+  assert.deepEqual(JSON.parse(r.capture ?? "null"), payload);
+});
+
+// JSON text with `depth` objects nested under scores. Built as text, so the test never encodes a
+// value that deep itself.
+function deeplyNestedScores(depth: number): string {
+  return `{"name":"ghost","scores":${'{"k":'.repeat(depth)}1${"}".repeat(depth)}}`;
+}
+
+test("runFixture fails the leg, instead of throwing, on a payload nested deeper than the comparison can recurse", () => {
+  const deep = deeplyNestedScores(100_000);
+  const r = runStubFixture(SCORES_CONTRACT, deep, deep, 0, String);
+  assert.equal(r.rc, 1, r.logged.join("\n").slice(0, 2000));
+  assert.ok(
+    r.logged.some((l) => l.includes("[FAIL] stub × hma: the payload or its golden is nested too deeply to compare (RangeError:")),
+    r.logged.join("\n").slice(0, 2000),
+  );
+  assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n").slice(0, 2000));
+  // a golden that deep fails the comparison of a shallow payload the same way
+  const g = runStubFixture(SCORES_CONTRACT, deep, '{"name":"ghost","scores":1}', 0, String);
+  assert.equal(g.rc, 1, g.logged.join("\n").slice(0, 2000));
+  assert.ok(
+    g.logged.some((l) => l.includes("[FAIL] stub × hma: the payload or its golden is nested too deeply to compare (RangeError:")),
+    g.logged.join("\n").slice(0, 2000),
+  );
+});
+
+test("unexpectedErrorReport prints the actual error key-sorted whether or not the golden records an error", () => {
+  const actual = { name: "ghost", error: { message: "ghost", code: "TIMEOUT" } };
+  const sorted = '    actual:   {"code":"TIMEOUT","message":"ghost"}';
+  const withGoldenError = unexpectedErrorReport("stub × hma", 1, actual, { name: "ghost", error: { code: "NOT_FOUND", message: "ghost" } });
+  assert.ok(withGoldenError.split("\n").includes(sorted), withGoldenError);
+  const withoutGoldenError = unexpectedErrorReport("stub × hma", 1, actual, { name: "ghost" });
+  assert.ok(withoutGoldenError.split("\n").includes(sorted), withoutGoldenError);
 });
 
 test("unexpectedErrorReport names a golden without an error instead of diffing against undefined", () => {

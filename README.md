@@ -38,7 +38,7 @@ fixtures/
 
 - `exercises` — which CLI commands the fixture runs
 - `participants` — list of CLIs for which a golden exists (others are skipped with a sentinel file)
-- `must_match` — list of JSONPath-ish keys byte-identical across participating CLIs
+- `must_match` — list of JSONPath-ish keys equal across participating CLIs apart from object key order
 - `may_differ` — list of keys per-CLI variation is allowed on (documented reason required)
 - `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs)
 
@@ -74,8 +74,9 @@ does not strand it. Consumers resolve this harness and its goldens from this rep
 golden landed here is live for them immediately — no pin bump.
 
 1. Build the changed CLI locally and run the harness against it (Quickstart env vars).
-2. Read the capture under `actual/<fixture>/<cli>.json`. Every drifted field must be an
-   intended consequence of the CLI change. An unintended drift is a bug in the CLI
+2. Read the capture under `actual/<fixture>/<cli>.json`: the CLI's output after the contract's
+   `normalize` rules, keys sorted, with a key named `__proto__` kept like any other. Every drifted
+   field must be an intended consequence of the CLI change. An unintended drift is a bug in the CLI
    change — fix it there; do not re-baseline over it.
 3. Copy the verified capture over the golden:
    `cp actual/<fixture>/<cli>.json fixtures/<fixture>/expected/<cli>.json`

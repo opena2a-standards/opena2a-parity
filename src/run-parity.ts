@@ -193,9 +193,10 @@ function replaceInStrings(obj: unknown, pattern: RegExp, replacement: string): u
   if (typeof obj === "string") return obj.replace(pattern, replacement);
   if (Array.isArray(obj)) return obj.map((x) => replaceInStrings(x, pattern, replacement));
   if (obj && typeof obj === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) out[k] = replaceInStrings(v, pattern, replacement);
-    return out;
+    // Built with Object.fromEntries, which defines each key: assigning a key named "__proto__" on a
+    // plain object sets the prototype instead, dropping that key (and all under it) from the
+    // comparison and the capture.
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, replaceInStrings(v, pattern, replacement)]));
   }
   return obj;
 }
@@ -227,8 +228,8 @@ function stableStringify(obj: unknown): string {
   return JSON.stringify(obj, Object.keys(obj as object).sort ? sortKeysReplacer() : null, 2);
 }
 
-// The key-sorting encoding stableStringify writes goldens and captures with, unindented. Goldens carry
-// sorted keys and a CLI emits its own order, so a value comparison goes through this on both sides.
+// The key-sorting encoding stableStringify writes captures with, unindented. A golden copied from a
+// capture has sorted keys; a CLI emits its own order, so a value comparison goes through this on both sides.
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, sortKeysReplacer());
 }
@@ -241,7 +242,7 @@ function sortKeysReplacer() {
       seen.add(value as object);
       // A copy without a prototype: on a plain object, assigning a key named "__proto__" sets the
       // prototype instead of creating a key, which would drop that key (and all under it) from the
-      // comparison on both sides.
+      // comparison on both sides and from the capture file.
       const sorted: Record<string, unknown> = Object.create(null);
       for (const k of Object.keys(value as object).sort()) {
         sorted[k] = (value as Record<string, unknown>)[k];
@@ -297,10 +298,17 @@ export function unexpectedErrorReport(label: string, exitCode: number, actual: u
     goldenHasError
       ? `[FAIL] ${label}: exit=${exitCode}, error payload still differs from the golden's after ${PROBE_RETRIES} attempts`
       : `[FAIL] ${label}: exit=${exitCode}, error payload still present after ${PROBE_RETRIES} attempts; the golden records no error`,
-    goldenHasError ? diffKey(actual, golden, "error") : `  at error:\n    actual:   ${JSON.stringify(getPath(actual, "error"))}`,
+    goldenHasError ? diffKey(actual, golden, "error") : `  at error:\n    actual:   ${canonicalJson(getPath(actual, "error"))}`,
     `  An unreachable registry fails here even when the must-match fields agree. A ${goldenHasError ? "reworded" : "new"} error is an`,
     `  intended output change: re-baseline golden-first (README.md "Re-baselining goldens").`,
   ].join("\n");
+}
+
+// JSON.parse accepts a document nested deeper than the call stack allows, but the clone, the key sort
+// and the comparison recurse and throw a RangeError on it. That fails its own leg instead of stopping
+// the harness before the remaining legs and fixtures run.
+function nestingFailureReport(label: string, err: RangeError): string {
+  return `[FAIL] ${label}: the payload or its golden is nested too deeply to compare (RangeError: ${err.message})`;
 }
 
 // Exported, with the two roots overridable, so a unit test can drive one fixture end to end
@@ -352,42 +360,48 @@ export function runFixture(
     } else {
       positionalArg = inputDir;
     }
-    // The golden decides which error payloads are expected and which absences are shape failures;
-    // a missing golden is reported below.
-    const shapeGoldenPath = join(expectedDir, `${cli}.json`);
-    const shapeGolden = existsSync(shapeGoldenPath) ? JSON.parse(readFileSync(shapeGoldenPath, "utf8")) : undefined;
-    // Normalized inside the probe, so the expected-error decision sees what the golden was copied from.
-    const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], kind === "directory" ? inputDir : "");
-    const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden, fixtureNormalize);
-    if (!parseOk) {
-      console.error(`[${fixtureName}] ${cli} produced non-JSON output (exit=${exitCode}). First 400 chars:\n${stdout.slice(0, 400)}`);
+    try {
+      // The golden decides which error payloads are expected and which absences are shape failures;
+      // a missing golden is reported below.
+      const shapeGoldenPath = join(expectedDir, `${cli}.json`);
+      const shapeGolden = existsSync(shapeGoldenPath) ? JSON.parse(readFileSync(shapeGoldenPath, "utf8")) : undefined;
+      // Normalized inside the probe, so the expected-error decision sees what the golden was copied from.
+      const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], kind === "directory" ? inputDir : "");
+      const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden, fixtureNormalize);
+      if (!parseOk) {
+        console.error(`[${fixtureName}] ${cli} produced non-JSON output (exit=${exitCode}). First 400 chars:\n${stdout.slice(0, 400)}`);
+        failures++;
+        continue;
+      }
+      const parsedVal = applyIntentionalDrift(parsed, cli);
+
+      const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
+      writeFileSync(actualPath, stableStringify(parsedVal));
+
+      const absent = absentMustMatchKeys(parsedVal, contract.must_match, shapeGolden);
+      if (absent.length > 0) {
+        const errorField = isTransientProbeFailure(parsedVal, shapeGolden) ? (parsedVal as { error?: unknown }).error : undefined;
+        console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, contract.must_match.length, errorField)}`);
+        console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
+        failures += absent.length;
+        continue; // no golden comparison for a document of the wrong shape; the keys are named above
+      }
+
+      // An error the golden does not expect, still there after the last retry, fails the leg even when
+      // every must-match key agrees (a missing golden is reported below instead).
+      if (shapeGolden !== undefined && isTransientProbeFailure(parsedVal, shapeGolden)) {
+        console.error(`\n${unexpectedErrorReport(`${fixtureName} × ${cli}`, exitCode, parsedVal, shapeGolden)}`);
+        console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
+        failures++;
+        continue;
+      }
+
+      results[cli] = { cli, exitCode, stdout, parsed: parsedVal };
+    } catch (err) {
+      if (!(err instanceof RangeError)) throw err;
+      console.error(`\n${nestingFailureReport(`${fixtureName} × ${cli}`, err)}`);
       failures++;
-      continue;
     }
-    const parsedVal = applyIntentionalDrift(parsed, cli);
-
-    const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
-    writeFileSync(actualPath, stableStringify(parsedVal));
-
-    const absent = absentMustMatchKeys(parsedVal, contract.must_match, shapeGolden);
-    if (absent.length > 0) {
-      const errorField = isTransientProbeFailure(parsedVal, shapeGolden) ? (parsedVal as { error?: unknown }).error : undefined;
-      console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, contract.must_match.length, errorField)}`);
-      console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
-      failures += absent.length;
-      continue; // no golden comparison for a document of the wrong shape; the keys are named above
-    }
-
-    // An error the golden does not expect, still there after the last retry, fails the leg even when
-    // every must-match key agrees (a missing golden is reported below instead).
-    if (shapeGolden !== undefined && isTransientProbeFailure(parsedVal, shapeGolden)) {
-      console.error(`\n${unexpectedErrorReport(`${fixtureName} × ${cli}`, exitCode, parsedVal, shapeGolden)}`);
-      console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
-      failures++;
-      continue;
-    }
-
-    results[cli] = { cli, exitCode, stdout, parsed: parsedVal };
   }
 
   for (const cli of contract.participants) {
@@ -402,9 +416,16 @@ export function runFixture(
     if (actual === undefined) continue;
 
     const diffs: string[] = [];
-    for (const key of contract.must_match) {
-      const d = diffKey(actual, golden, key);
-      if (d) diffs.push(d);
+    try {
+      for (const key of contract.must_match) {
+        const d = diffKey(actual, golden, key);
+        if (d) diffs.push(d);
+      }
+    } catch (err) {
+      if (!(err instanceof RangeError)) throw err;
+      console.error(`\n${nestingFailureReport(`${fixtureName} × ${cli}`, err)}`);
+      failures++;
+      continue;
     }
     if (diffs.length > 0) {
       console.error(`\n[FAIL] ${fixtureName} × ${cli}: ${diffs.length} must-match field(s) drifted`);
@@ -413,7 +434,7 @@ export function runFixture(
       console.error(`  Intended output change? Re-baseline golden-first: README.md "Re-baselining goldens".`);
       failures += diffs.length;
     } else {
-      console.log(`[OK]   ${fixtureName} × ${cli}: ${contract.must_match.length} must-match fields byte-identical`);
+      console.log(`[OK]   ${fixtureName} × ${cli}: ${contract.must_match.length} must-match fields equal apart from object key order`);
     }
   }
 
