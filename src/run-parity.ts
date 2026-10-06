@@ -106,10 +106,11 @@ function carriesError(doc: unknown): boolean {
 export function isTransientProbeFailure(parsed: unknown, golden?: unknown): boolean {
   if (!carriesError(parsed)) return false;
   // Only the exact error the golden records is expected; any other error is still operational.
-  // Compared by JSON encoding, as diffKey does, so an object-valued error equal to the golden's matches.
+  // Compared by canonical encoding, as diffKey does, so an object-valued error equal to the golden's
+  // matches whatever order the CLI emitted its keys in.
   return (
     !carriesError(golden) ||
-    JSON.stringify((parsed as { error?: unknown }).error) !== JSON.stringify((golden as { error?: unknown }).error)
+    canonicalJson((parsed as { error?: unknown }).error) !== canonicalJson((golden as { error?: unknown }).error)
   );
 }
 
@@ -226,13 +227,22 @@ function stableStringify(obj: unknown): string {
   return JSON.stringify(obj, Object.keys(obj as object).sort ? sortKeysReplacer() : null, 2);
 }
 
+// The key-sorting encoding stableStringify writes goldens and captures with, unindented. Goldens carry
+// sorted keys and a CLI emits its own order, so a value comparison goes through this on both sides.
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, sortKeysReplacer());
+}
+
 function sortKeysReplacer() {
   const seen = new WeakSet();
   return function (_key: string, value: unknown) {
     if (value && typeof value === "object" && !Array.isArray(value)) {
       if (seen.has(value as object)) return value;
       seen.add(value as object);
-      const sorted: Record<string, unknown> = {};
+      // A copy without a prototype: on a plain object, assigning a key named "__proto__" sets the
+      // prototype instead of creating a key, which would drop that key (and all under it) from the
+      // comparison on both sides.
+      const sorted: Record<string, unknown> = Object.create(null);
       for (const k of Object.keys(value as object).sort()) {
         sorted[k] = (value as Record<string, unknown>)[k];
       }
@@ -270,8 +280,8 @@ export function shapeFailureReport(label: string, exitCode: number, absent: stri
 function diffKey(actual: unknown, golden: unknown, path: string): string | null {
   const a = getPath(actual, path);
   const g = getPath(golden, path);
-  const aj = JSON.stringify(a);
-  const gj = JSON.stringify(g);
+  const aj = canonicalJson(a);
+  const gj = canonicalJson(g);
   if (aj === gj) return null;
   return `  at ${path}:\n    expected: ${gj}\n    actual:   ${aj}`;
 }

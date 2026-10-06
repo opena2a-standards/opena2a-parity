@@ -8,8 +8,9 @@ secrets.json
 # local rule that ignores the fixtures directory itself, or the rules below.
 !/fixtures/**
 # Dependencies, logs and OS metadata stay ignored everywhere, fixtures included; add a fixture
-# input these match with `git add -f`.
-node_modules/
+# input these match with `git add -f`. node_modules has no trailing slash so that it also covers
+# an installed copy linked into the checkout: git does not treat a symbolic link as a directory.
+node_modules
 *.log
 .DS_Store
 # Harness run output, and the CLI checkouts the CI workflow creates.

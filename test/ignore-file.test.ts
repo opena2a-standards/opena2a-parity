@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 // repository root expects (GIT-002), and re-includes paths under fixtures/ so that neither those
 // rules nor a contributor-local rule matching a file there can hide a fixture input from git. It
 // cannot re-include an input under a directory a local rule excludes (fixtures/ itself), and the
-// node_modules/, *.log and .DS_Store rules still apply inside fixtures/. Exclusions for a
+// node_modules, *.log and .DS_Store rules still apply inside fixtures/. Exclusions for a
 // contributor's personal editor or tooling state belong in that contributor's .git/info/exclude or
 // global ignore file, not here. Adding a rule is a deliberate change to this list.
 
@@ -22,7 +22,7 @@ const EXPECTED_RULES = [
   "*.pem",
   "*.key",
   "!/fixtures/**",
-  "node_modules/",
+  "node_modules",
   "*.log",
   ".DS_Store",
   "/actual/",
@@ -63,8 +63,8 @@ test(".gitignore carries only the repository's own rules", { skip }, () => {
 });
 
 // Git refuses to check a path that lies under a symbolic link ("beyond a symbolic link", exit 128),
-// so such a path is left out. node_modules/ is one when an installed copy is linked into the
-// checkout rather than installed in it.
+// so such a path is left out. node_modules/yaml/package.json is one when an installed copy is linked
+// into the checkout rather than installed in it; node_modules itself, the link, is still checked.
 export function beyondSymlink(root: string, path: string): boolean {
   const parts = path.split("/");
   for (let i = 1; i < parts.length; i++) {
@@ -96,6 +96,7 @@ function checkIgnoredPaths(root: string): void {
     for (const path of [
       "actual/secure-dirty-skill/hma.json",
       "ext/hackmyagent/package.json",
+      "node_modules",
       "node_modules/yaml/package.json",
       ".env",
       "server.key",
@@ -137,6 +138,8 @@ test("a checkout whose node_modules is a symbolic link passes the ignore checks"
     writeFileSync(join(root, "installed", "yaml", "package.json"), "{}\n");
     symlinkSync(join(root, "installed"), join(root, "node_modules"));
     assert.equal(beyondSymlink(root, "node_modules/yaml/package.json"), true);
+    // The link itself has no component beyond a link, so git evaluates it and it stays checked.
+    assert.equal(beyondSymlink(root, "node_modules"), false);
     assert.equal(beyondSymlink(root, "installed/yaml/package.json"), false);
     assert.equal(beyondSymlink(root, "actual/secure-dirty-skill/hma.json"), false);
     checkIgnoredPaths(root);
