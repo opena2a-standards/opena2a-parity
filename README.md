@@ -93,9 +93,11 @@ record the measurement and reopen the ordering decision.
 
 A consumer's parity job also runs this repo's harness unit tests (`npm test`) from
 `main`, so a unit test that fails on `main` turns every consumer's parity leg red.
-The two checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
-`GITHUB_REPOSITORY` names another repository; that file's two tests of its helper functions,
-and the remaining unit tests, which cover the harness that consumers run, stay on everywhere.
+The three checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
+`GITHUB_REPOSITORY` names another repository, and the one that asks git about this repo's
+checkout also skips in a tree that is not its own git checkout; that file's three tests of its
+helper functions, and the remaining unit tests, which cover the harness that consumers run, stay
+on everywhere.
 A `.gitignore` change lands together with its `EXPECTED_RULES` update in that test.
 
 ## Intentional-drift demo
