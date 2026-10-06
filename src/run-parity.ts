@@ -164,12 +164,16 @@ export function probeWithRetry(
   return last;
 }
 
+// Each segment is read only as an own key: a plain `cur[p]` resolves a segment named "__proto__" or
+// "constructor" to Object.prototype or Object on a payload that does not carry it, so the key would
+// compare inherited values and never be reported absent. A JSON payload that does carry such a key
+// holds it as an own property, so it still resolves.
 function getPath(obj: unknown, path: string): unknown {
   if (path === "" || path === "$") return obj;
   const parts = path.replace(/^\$\.?/, "").split(".").filter(Boolean);
   let cur: unknown = obj;
   for (const p of parts) {
-    if (cur == null || typeof cur !== "object") return undefined;
+    if (cur == null || typeof cur !== "object" || !Object.hasOwn(cur, p)) return undefined;
     cur = (cur as Record<string, unknown>)[p];
   }
   return cur;

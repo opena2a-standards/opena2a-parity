@@ -45,6 +45,20 @@ test("a key the participant's golden also omits is absence on both sides, not a 
   assert.deepEqual(absentMustMatchKeys(aiTrustActual, withScanStatus), ["scanStatus"]);
 });
 
+test("a must-match path segment that names an inherited property is absent unless the payload carries it", () => {
+  // Read as `cur[p]`, "__proto__" resolved to Object.prototype and "constructor" to Object on a
+  // payload that carries neither, so neither was ever reported absent.
+  const inherited = ["__proto__", "constructor", "toString", "result.__proto__", "result.hasOwnProperty"];
+  assert.deepEqual(absentMustMatchKeys({ found: true, result: {} }, ["found", ...inherited]), inherited);
+  // a JSON payload carrying the key holds it as an own property, so it is present
+  const carried = JSON.parse('{"__proto__": {"x": 1}, "constructor": null, "result": {"__proto__": 0}}');
+  assert.deepEqual(absentMustMatchKeys(carried, ["__proto__", "__proto__.x", "constructor", "result.__proto__"]), []);
+  // a golden that carries it and a payload that omits it is a shape failure, not "absent == absent"
+  assert.deepEqual(absentMustMatchKeys({ found: true }, ["__proto__"], carried), ["__proto__"]);
+  // array indices and length are own properties and still resolve
+  assert.deepEqual(absentMustMatchKeys({ items: ["a"] }, ["items.0", "items.length", "items.1"]), ["items.1"]);
+});
+
 test("a participant returning exit 0 with the must-match keys absent is a shape failure the retry does not absorb", () => {
   const dir = mkdtempSync(join(tmpdir(), "parity-shape-"));
   const counter = join(dir, "n");
