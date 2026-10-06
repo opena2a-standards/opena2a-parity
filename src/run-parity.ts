@@ -78,8 +78,9 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
 // it still differs after the last attempt runFixture fails the leg whatever the
 // must-match keys say: a timeout payload there carries name, found: false and
 // ecosystem with the expected values, so the error is the only field that tells
-// "not found" from "not reached". A CLI that rewords that error re-baselines its
-// golden first, like any other intended output change.
+// "not found" from "not reached". A CLI that rewords that error on purpose
+// re-baselines its golden first, like any other intended output change; if the
+// rewording was not intended, it is a CLI regression and the golden stays as it is.
 //
 // Goldens are copied from normalized captures, so the decision is made on the
 // normalized payload, never the raw one.
@@ -163,12 +164,16 @@ export function probeWithRetry(
   return last;
 }
 
+// Each segment is read only as an own key: a plain `cur[p]` resolves a segment named "__proto__" or
+// "constructor" to Object.prototype or Object on a payload that does not carry it, so the key would
+// compare inherited values and never be reported absent. A JSON payload that does carry such a key
+// holds it as an own property, so it still resolves.
 function getPath(obj: unknown, path: string): unknown {
   if (path === "" || path === "$") return obj;
   const parts = path.replace(/^\$\.?/, "").split(".").filter(Boolean);
   let cur: unknown = obj;
   for (const p of parts) {
-    if (cur == null || typeof cur !== "object") return undefined;
+    if (cur == null || typeof cur !== "object" || !Object.hasOwn(cur, p)) return undefined;
     cur = (cur as Record<string, unknown>)[p];
   }
   return cur;
@@ -307,9 +312,13 @@ export function unexpectedErrorReport(label: string, exitCode: number, actual: u
 
 // JSON.parse accepts a document nested deeper than the call stack allows, but the clone, the key sort
 // and the comparison recurse and throw a RangeError on it. That fails its own leg instead of stopping
-// the harness before the remaining legs and fixtures run.
-function nestingFailureReport(label: string, err: RangeError): string {
-  return `[FAIL] ${label}: the payload or its golden is nested too deeply to compare (RangeError: ${err.message})`;
+// the harness before the remaining legs and fixtures run. A RangeError from anything else, such as a
+// size limit on reading or encoding a document, fails the leg too, without being called a nesting failure.
+function comparisonFailureReport(label: string, err: RangeError): string {
+  const reason = err.message.includes("Maximum call stack size exceeded")
+    ? "is nested too deeply to compare"
+    : "could not be compared";
+  return `[FAIL] ${label}: the payload or its golden ${reason} (RangeError: ${err.message})`;
 }
 
 // Exported, with the two roots overridable, so a unit test can drive one fixture end to end
@@ -400,7 +409,7 @@ export function runFixture(
       results[cli] = { cli, exitCode, stdout, parsed: parsedVal };
     } catch (err) {
       if (!(err instanceof RangeError)) throw err;
-      console.error(`\n${nestingFailureReport(`${fixtureName} × ${cli}`, err)}`);
+      console.error(`\n${comparisonFailureReport(`${fixtureName} × ${cli}`, err)}`);
       failures++;
     }
   }
@@ -424,7 +433,7 @@ export function runFixture(
       }
     } catch (err) {
       if (!(err instanceof RangeError)) throw err;
-      console.error(`\n${nestingFailureReport(`${fixtureName} × ${cli}`, err)}`);
+      console.error(`\n${comparisonFailureReport(`${fixtureName} × ${cli}`, err)}`);
       failures++;
       continue;
     }

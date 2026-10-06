@@ -1,6 +1,7 @@
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import fs, { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { isTransientProbeFailure, probeWithRetry, runFixture, unexpectedErrorReport } from "../src/run-parity.ts";
@@ -299,6 +300,21 @@ test("the unexpected-error report offers re-baselining as a conditional, not a v
   }
 });
 
+test("README.md and the retry comment give a reworded error the report's two outcomes: re-baseline if intended, CLI regression if not", () => {
+  const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  // the sentences wrap across lines, and the source one across comment lines, so read each as one line
+  const docs = [
+    ["README.md", read("README.md").replace(/\s+/g, " ")],
+    ["src/run-parity.ts", read("src/run-parity.ts").replace(/\n\s*\/\/ ?/g, " ").replace(/\s+/g, " ")],
+  ] as const;
+  for (const [path, text] of docs) {
+    const sentence = text.match(/A CLI that rewords (?:its|that) error[^.]*\./)?.[0];
+    assert.ok(sentence, `${path}: no sentence on a CLI that rewords its error`);
+    assert.match(sentence, /on purpose re-baselines its golden first/, `${path}: ${sentence}`);
+    assert.match(sentence, /if the rewording was not intended, it is a CLI regression and the golden stays as it is\.$/, `${path}: ${sentence}`);
+  }
+});
+
 test("runFixture fails a not-found leg on a registry timeout that carries every must-match key", () => {
   // name, found: false and ecosystem all match the golden; only the error says the registry was not reached
   const timeout = { name: "ghost", found: false, error: "Registry request timed out after 10000ms", ecosystem: "npm" };
@@ -458,6 +474,35 @@ test("runFixture fails the leg, instead of throwing, on a payload nested deeper 
     g.logged.some((l) => l.includes("[FAIL] stub × hma: the payload or its golden is nested too deeply to compare (RangeError:")),
     g.logged.join("\n").slice(0, 2000),
   );
+});
+
+test("runFixture does not call a RangeError that is not a stack overflow a nesting failure", () => {
+  // A size limit throws a RangeError too, for example readFileSync's ERR_FS_FILE_TOO_LARGE on a golden
+  // above 2 GiB. One stands in for it on the first read of the golden instead of a file that large.
+  const original = fs.readFileSync;
+  let thrown = false;
+  mock.method(fs, "readFileSync", function (this: unknown, ...args: Parameters<typeof fs.readFileSync>) {
+    if (!thrown && String(args[0]).endsWith(join("expected", "hma.json"))) {
+      thrown = true;
+      throw new RangeError("x");
+    }
+    return original.apply(this, args);
+  });
+  syncBuiltinESMExports();
+  let r: ReturnType<typeof runStubFixture>;
+  try {
+    r = runStubFixture(SCORES_CONTRACT, { name: "ghost", scores: 1 }, { name: "ghost", scores: 1 }, 0);
+  } finally {
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.ok(thrown, "the golden was never read");
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(
+    r.logged.some((l) => l.includes("[FAIL] stub × hma: the payload or its golden could not be compared (RangeError: x)")),
+    r.logged.join("\n"),
+  );
+  assert.ok(!r.logged.some((l) => l.includes("nested too deeply")), r.logged.join("\n"));
 });
 
 test("unexpectedErrorReport prints the actual error key-sorted whether or not the golden records an error", () => {

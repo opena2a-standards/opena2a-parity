@@ -49,7 +49,8 @@ even where the contract lists `error` under `may_differ` (which lets the wording
 CLIs). An error the golden does not record is retried up to three times, and if it still differs
 after the last attempt the leg fails: on `check-not-found` a registry timeout carries the same
 `name`, `found` and `ecosystem` as a real not-found, so the error is what tells them apart. A CLI
-that rewords its error re-baselines its golden first, like any other intended output change.
+that rewords its error on purpose re-baselines its golden first, like any other intended output
+change; if the rewording was not intended, it is a CLI regression and the golden stays as it is.
 
 ## Adding a fixture
 
@@ -92,9 +93,11 @@ record the measurement and reopen the ordering decision.
 
 A consumer's parity job also runs this repo's harness unit tests (`npm test`) from
 `main`, so a unit test that fails on `main` turns every consumer's parity leg red.
-The two checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
-`GITHUB_REPOSITORY` names another repository; that file's two tests of its helper functions,
-and the remaining unit tests, which cover the harness that consumers run, stay on everywhere.
+The three checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
+`GITHUB_REPOSITORY` names another repository, and the one that asks git about this repo's
+checkout also skips in a tree that is not its own git checkout; that file's three tests of its
+helper functions, and the remaining unit tests, which cover the harness that consumers run, stay
+on everywhere.
 A `.gitignore` change lands together with its `EXPECTED_RULES` update in that test.
 
 ## Intentional-drift demo
