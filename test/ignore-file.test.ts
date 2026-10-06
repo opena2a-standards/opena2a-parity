@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,14 +62,31 @@ test(".gitignore carries only the repository's own rules", { skip }, () => {
   );
 });
 
-test("git ignores run output and checkouts, and contributor-local rules cannot hide a fixture input", { skip }, () => {
+// Git refuses to check a path that lies under a symbolic link ("beyond a symbolic link", exit 128),
+// so such a path is left out. node_modules/ is one when an installed copy is linked into the
+// checkout rather than installed in it.
+export function beyondSymlink(root: string, path: string): boolean {
+  const parts = path.split("/");
+  for (let i = 1; i < parts.length; i++) {
+    let link: boolean;
+    try {
+      link = lstatSync(join(root, ...parts.slice(0, i))).isSymbolicLink();
+    } catch {
+      return false;
+    }
+    if (link) return true;
+  }
+  return false;
+}
+
+function checkIgnoredPaths(root: string): void {
   // Stand-in for a contributor's global ignore file that excludes editor state and env files.
   const dir = mkdtempSync(join(tmpdir(), "parity-ignore-"));
   const localExcludes = join(dir, "excludes");
   writeFileSync(localExcludes, ".env\n.env.local\n.cursorrules\n.claude/\nCLAUDE.md\n");
   const ignored = (path: string): boolean => {
     const r = spawnSync("git", ["-c", `core.excludesFile=${localExcludes}`, "check-ignore", "-q", "--no-index", path], {
-      cwd: repoRoot,
+      cwd: root,
       encoding: "utf8",
     });
     assert.ok(r.status === 0 || r.status === 1, `git check-ignore ${path} failed: ${r.stderr}`);
@@ -85,7 +102,7 @@ test("git ignores run output and checkouts, and contributor-local rules cannot h
       "fixtures/example/input/node_modules/pkg/index.js",
       "fixtures/example/input/debug.log",
       "fixtures/example/input/.DS_Store",
-    ]) {
+    ].filter((p) => !beyondSymlink(root, p))) {
       assert.equal(ignored(path), true, `${path} should be ignored`);
     }
     // A fixture input that carries its own .gitignore still applies it inside that fixture (git gives
@@ -99,11 +116,32 @@ test("git ignores run output and checkouts, and contributor-local rules cannot h
       "fixtures/example/input/CLAUDE.md",
       "fixtures/example/input/fake-private.key",
       "fixtures/example/input/fake-cert.pem",
-    ]) {
+    ].filter((p) => !beyondSymlink(root, p))) {
       assert.equal(ignored(path), false, `${path} is a fixture input and must not be ignored`);
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("git ignores run output and checkouts, and contributor-local rules cannot hide a fixture input", { skip }, () => {
+  checkIgnoredPaths(repoRoot);
+});
+
+test("a checkout whose node_modules is a symbolic link passes the ignore checks", { skip }, () => {
+  const root = mkdtempSync(join(tmpdir(), "parity-linked-"));
+  try {
+    assert.equal(spawnSync("git", ["init", "-q"], { cwd: root }).status, 0);
+    copyFileSync(join(repoRoot, ".gitignore"), join(root, ".gitignore"));
+    mkdirSync(join(root, "installed", "yaml"), { recursive: true });
+    writeFileSync(join(root, "installed", "yaml", "package.json"), "{}\n");
+    symlinkSync(join(root, "installed"), join(root, "node_modules"));
+    assert.equal(beyondSymlink(root, "node_modules/yaml/package.json"), true);
+    assert.equal(beyondSymlink(root, "installed/yaml/package.json"), false);
+    assert.equal(beyondSymlink(root, "actual/secure-dirty-skill/hma.json"), false);
+    checkIgnoredPaths(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
