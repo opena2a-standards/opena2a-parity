@@ -307,9 +307,13 @@ export function unexpectedErrorReport(label: string, exitCode: number, actual: u
 
 // JSON.parse accepts a document nested deeper than the call stack allows, but the clone, the key sort
 // and the comparison recurse and throw a RangeError on it. That fails its own leg instead of stopping
-// the harness before the remaining legs and fixtures run.
-function nestingFailureReport(label: string, err: RangeError): string {
-  return `[FAIL] ${label}: the payload or its golden is nested too deeply to compare (RangeError: ${err.message})`;
+// the harness before the remaining legs and fixtures run. A RangeError from anything else, such as a
+// size limit on reading or encoding a document, fails the leg too, without being called a nesting failure.
+function comparisonFailureReport(label: string, err: RangeError): string {
+  const reason = err.message.includes("Maximum call stack size exceeded")
+    ? "is nested too deeply to compare"
+    : "could not be compared";
+  return `[FAIL] ${label}: the payload or its golden ${reason} (RangeError: ${err.message})`;
 }
 
 // Exported, with the two roots overridable, so a unit test can drive one fixture end to end
@@ -400,7 +404,7 @@ export function runFixture(
       results[cli] = { cli, exitCode, stdout, parsed: parsedVal };
     } catch (err) {
       if (!(err instanceof RangeError)) throw err;
-      console.error(`\n${nestingFailureReport(`${fixtureName} × ${cli}`, err)}`);
+      console.error(`\n${comparisonFailureReport(`${fixtureName} × ${cli}`, err)}`);
       failures++;
     }
   }
@@ -424,7 +428,7 @@ export function runFixture(
       }
     } catch (err) {
       if (!(err instanceof RangeError)) throw err;
-      console.error(`\n${nestingFailureReport(`${fixtureName} × ${cli}`, err)}`);
+      console.error(`\n${comparisonFailureReport(`${fixtureName} × ${cli}`, err)}`);
       failures++;
       continue;
     }

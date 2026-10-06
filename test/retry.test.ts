@@ -1,6 +1,7 @@
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import fs, { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { isTransientProbeFailure, probeWithRetry, runFixture, unexpectedErrorReport } from "../src/run-parity.ts";
@@ -458,6 +459,35 @@ test("runFixture fails the leg, instead of throwing, on a payload nested deeper 
     g.logged.some((l) => l.includes("[FAIL] stub × hma: the payload or its golden is nested too deeply to compare (RangeError:")),
     g.logged.join("\n").slice(0, 2000),
   );
+});
+
+test("runFixture does not call a RangeError that is not a stack overflow a nesting failure", () => {
+  // A size limit throws a RangeError too, for example readFileSync's ERR_FS_FILE_TOO_LARGE on a golden
+  // above 2 GiB. One stands in for it on the first read of the golden instead of a file that large.
+  const original = fs.readFileSync;
+  let thrown = false;
+  mock.method(fs, "readFileSync", function (this: unknown, ...args: Parameters<typeof fs.readFileSync>) {
+    if (!thrown && String(args[0]).endsWith(join("expected", "hma.json"))) {
+      thrown = true;
+      throw new RangeError("x");
+    }
+    return original.apply(this, args);
+  });
+  syncBuiltinESMExports();
+  let r: ReturnType<typeof runStubFixture>;
+  try {
+    r = runStubFixture(SCORES_CONTRACT, { name: "ghost", scores: 1 }, { name: "ghost", scores: 1 }, 0);
+  } finally {
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.ok(thrown, "the golden was never read");
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(
+    r.logged.some((l) => l.includes("[FAIL] stub × hma: the payload or its golden could not be compared (RangeError: x)")),
+    r.logged.join("\n"),
+  );
+  assert.ok(!r.logged.some((l) => l.includes("nested too deeply")), r.logged.join("\n"));
 });
 
 test("unexpectedErrorReport prints the actual error key-sorted whether or not the golden records an error", () => {
