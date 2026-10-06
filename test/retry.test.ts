@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isTransientProbeFailure, probeWithRetry, runFixture } from "../src/run-parity.ts";
+import { isTransientProbeFailure, probeWithRetry, runFixture, unexpectedErrorReport } from "../src/run-parity.ts";
 
 test("isTransientProbeFailure fires only on an operational error payload", () => {
   // the exact timeout shape ai-trust emits
@@ -277,6 +277,28 @@ test("runFixture fails a not-found leg on a registry timeout that carries every 
   assert.equal(r.rc, 1);
   assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma") && l.includes("Registry request timed out after 10000ms")), r.logged.join("\n"));
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
+});
+
+test("unexpectedErrorReport names a golden without an error instead of diffing against undefined", () => {
+  const report = unexpectedErrorReport("x × hma", 1, { name: "a", error: "boom" }, { name: "a", found: true });
+  assert.match(report, /^\[FAIL\] x × hma: exit=1, error payload still present after 3 attempts; the golden records no error$/m);
+  assert.match(report, /actual: {3}"boom"/);
+  assert.doesNotMatch(report, /undefined|differs from the golden's/);
+  // a golden that records an error keeps the diff
+  const reworded = unexpectedErrorReport("x × hma", 1, { name: "a", error: "boom" }, { name: "a", error: "gone" });
+  assert.match(reworded, /error payload still differs from the golden's after 3 attempts/);
+  assert.match(reworded, /expected: "gone"\n {4}actual: {3}"boom"/);
+});
+
+test("runFixture says the golden records no error when a timeout outlasts the retries on a fixture that expects none", () => {
+  const { error: _, ...found } = NOT_FOUND_GOLDEN;
+  const timeout = { ...found, error: "Registry request timed out after 10000ms" };
+  const r = runStubFixture(NOT_FOUND_CONTRACT, found, timeout);
+  assert.equal(r.invocations, 3);
+  assert.equal(r.rc, 1);
+  const report = r.logged.find((l) => l.includes("[FAIL] stub × hma")) ?? "";
+  assert.ok(report.includes("the golden records no error") && report.includes("Registry request timed out after 10000ms"), r.logged.join("\n"));
+  assert.ok(!report.includes("undefined"), report);
 });
 
 test("runFixture decides whether an error is expected on the normalized payload the golden was copied from", () => {
