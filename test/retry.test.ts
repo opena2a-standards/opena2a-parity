@@ -295,6 +295,46 @@ test("runFixture passes a leg on the first attempt when its object-valued error 
   assert.ok(!r.logged.some((l) => l.includes("[FAIL]")), r.logged.join("\n"));
 });
 
+// Goldens are written with sorted keys; a CLI emits its own key order. The same error in another order is the same error.
+const REORDERED_OBJECT_ERROR = { ...OBJECT_ERROR_GOLDEN, error: { message: "ghost", code: "NOT_FOUND" } };
+
+test("isTransientProbeFailure matches an object-valued error whose keys are in a different order from the golden's", () => {
+  assert.equal(isTransientProbeFailure(REORDERED_OBJECT_ERROR, OBJECT_ERROR_GOLDEN), false);
+  const otherCode = { ...OBJECT_ERROR_GOLDEN, error: { message: "ghost", code: "TIMEOUT" } };
+  assert.equal(isTransientProbeFailure(otherCode, OBJECT_ERROR_GOLDEN), true);
+});
+
+test("runFixture passes a leg on the first attempt when its object-valued error matches the golden's in another key order", () => {
+  const r = runStubFixture(NOT_FOUND_CONTRACT, OBJECT_ERROR_GOLDEN, REORDERED_OBJECT_ERROR);
+  assert.equal(r.invocations, 1, r.logged.join("\n"));
+  assert.equal(r.rc, 0, r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.includes("[FAIL]")), r.logged.join("\n"));
+});
+
+test("runFixture compares an object-valued must-match key regardless of key order", () => {
+  const contract = `
+description: object-valued must-match stub
+kind: package-name
+package: ghost
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+participants:
+  - hma
+must_match:
+  - name
+  - scores
+may_differ: []
+`;
+  const golden = { name: "ghost", scores: { a: 1, b: { c: 2, d: 3 } } };
+  const r = runStubFixture(contract, golden, { scores: { b: { d: 3, c: 2 }, a: 1 }, name: "ghost" }, 0);
+  assert.equal(r.rc, 0, r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × hma: 2 must-match fields")), r.logged.join("\n"));
+  // a changed value in the same reordered object is still drift
+  const drift = runStubFixture(contract, golden, { scores: { b: { d: 4, c: 2 }, a: 1 }, name: "ghost" }, 0);
+  assert.equal(drift.rc, 1, drift.logged.join("\n"));
+  assert.ok(drift.logged.some((l) => l.includes("[FAIL] stub × hma: 1 must-match field(s) drifted")), drift.logged.join("\n"));
+});
+
 test("unexpectedErrorReport names a golden without an error instead of diffing against undefined", () => {
   const report = unexpectedErrorReport("x × hma", 1, { name: "a", error: "boom" }, { name: "a", found: true });
   assert.match(report, /^\[FAIL\] x × hma: exit=1, error payload still present after 3 attempts; the golden records no error$/m);
