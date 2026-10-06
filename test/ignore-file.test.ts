@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,7 +49,22 @@ export function committedRules(text: string): string[] {
     .filter((l) => l.trim() !== "" && !l.startsWith("#"));
 }
 
+// git check-ignore answers only inside a work tree, and inside another repository's work tree it
+// would also apply that repository's rules. A tree that is not its own checkout, such as one
+// extracted with `git archive`, skips the checks that ask git instead of failing them.
+export function checkoutSkipReason(root: string): string | false {
+  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  if (r.error || r.status !== 0) {
+    return "needs a git checkout; this tree is not one (for example, a tree extracted with git archive)";
+  }
+  if (realpathSync(r.stdout.trim()) !== realpathSync(root)) {
+    return "needs a git checkout of its own; this tree lies inside another repository's work tree";
+  }
+  return false;
+}
+
 const skip = skipReason(process.env.GITHUB_REPOSITORY);
+const gitSkip = skip || checkoutSkipReason(repoRoot);
 
 test(".gitignore carries only the repository's own rules", { skip }, () => {
   const rules = committedRules(readFileSync(join(repoRoot, ".gitignore"), "utf8"));
@@ -125,7 +140,7 @@ function checkIgnoredPaths(root: string): void {
   }
 }
 
-test("git ignores run output and checkouts, and contributor-local rules cannot hide a fixture input", { skip }, () => {
+test("git ignores run output and checkouts, and contributor-local rules cannot hide a fixture input", { skip: gitSkip }, () => {
   checkIgnoredPaths(repoRoot);
 });
 
@@ -158,4 +173,19 @@ test("the ignore-file checks run locally and in this repository, and skip for a 
   assert.equal(skipReason("opena2a-org/opena2a-parity"), false);
   assert.equal(skipReason("opena2a-standards/opena2a-parity"), false);
   assert.match(String(skipReason("opena2a-org/hackmyagent")), /not run on behalf of opena2a-org\/hackmyagent/);
+});
+
+test("the checks that ask git skip in a tree that is not its own git checkout", () => {
+  const root = mkdtempSync(join(tmpdir(), "parity-checkout-"));
+  try {
+    // An extracted tree, with no .git of its own.
+    assert.match(String(checkoutSkipReason(root)), /needs a git checkout/);
+    assert.equal(spawnSync("git", ["init", "-q"], { cwd: root }).status, 0);
+    assert.equal(checkoutSkipReason(root), false);
+    // An extracted tree inside another repository's work tree.
+    mkdirSync(join(root, "extracted"));
+    assert.match(String(checkoutSkipReason(join(root, "extracted"))), /inside another repository's work tree/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
