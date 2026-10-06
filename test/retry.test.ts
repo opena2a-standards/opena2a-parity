@@ -279,15 +279,42 @@ test("runFixture fails a not-found leg on a registry timeout that carries every 
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
 });
 
+// A golden may record a structured error; an equal object is the same error, not a reworded one.
+const OBJECT_ERROR_GOLDEN = { name: "ghost", found: false, ecosystem: "npm", error: { code: "NOT_FOUND", message: "ghost" } };
+
+test("isTransientProbeFailure compares an object-valued error by value, not by reference", () => {
+  assert.equal(isTransientProbeFailure(structuredClone(OBJECT_ERROR_GOLDEN), OBJECT_ERROR_GOLDEN), false);
+  const otherCode = { ...OBJECT_ERROR_GOLDEN, error: { code: "TIMEOUT", message: "ghost" } };
+  assert.equal(isTransientProbeFailure(otherCode, OBJECT_ERROR_GOLDEN), true);
+});
+
+test("runFixture passes a leg on the first attempt when its object-valued error matches the golden's", () => {
+  const r = runStubFixture(NOT_FOUND_CONTRACT, OBJECT_ERROR_GOLDEN, OBJECT_ERROR_GOLDEN);
+  assert.equal(r.invocations, 1, r.logged.join("\n"));
+  assert.equal(r.rc, 0, r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.includes("[FAIL]")), r.logged.join("\n"));
+});
+
 test("unexpectedErrorReport names a golden without an error instead of diffing against undefined", () => {
   const report = unexpectedErrorReport("x × hma", 1, { name: "a", error: "boom" }, { name: "a", found: true });
   assert.match(report, /^\[FAIL\] x × hma: exit=1, error payload still present after 3 attempts; the golden records no error$/m);
   assert.match(report, /actual: {3}"boom"/);
   assert.doesNotMatch(report, /undefined|differs from the golden's/);
+  assert.match(report, /A new error is an$/m);
+  assert.doesNotMatch(report, /reworded/);
   // a golden that records an error keeps the diff
   const reworded = unexpectedErrorReport("x × hma", 1, { name: "a", error: "boom" }, { name: "a", error: "gone" });
   assert.match(reworded, /error payload still differs from the golden's after 3 attempts/);
   assert.match(reworded, /expected: "gone"\n {4}actual: {3}"boom"/);
+  assert.match(reworded, /A reworded error is an$/m);
+  assert.doesNotMatch(reworded, /A new error/);
+  // an empty or null error key records no error either: the branch follows the value, not the key's presence
+  for (const empty of ["", null]) {
+    const blank = unexpectedErrorReport("x × hma", 1, { name: "a", error: "boom" }, { name: "a", error: empty });
+    assert.match(blank, /^\[FAIL\] x × hma: exit=1, error payload still present after 3 attempts; the golden records no error$/m, `error: ${JSON.stringify(empty)}`);
+    assert.match(blank, /A new error is an$/m, `error: ${JSON.stringify(empty)}`);
+    assert.doesNotMatch(blank, /differs from the golden's|expected:/, `error: ${JSON.stringify(empty)}`);
+  }
 });
 
 test("runFixture says the golden records no error when a timeout outlasts the retries on a fixture that expects none", () => {
