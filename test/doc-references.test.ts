@@ -13,7 +13,17 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 const DOCUMENT_PATH = /[\w./~-]+\.(?:md|mdx|markdown|rst|adoc|txt|pdf|docx?)(?![\w])/g;
 const TICKET_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g;
-const MILESTONE_CODE = /\b[MF]\d+\b/g;
+// A milestone code followed by a chip tier, "chip" or "score" is an Apple silicon chip (M4 Max) or the F1 score.
+const MILESTONE_CODE = /\b[MF]\d+\b(?![ -](?:Pro|Max|Ultra|chip|[Ss]core)\b)/g;
+
+// Public technical names that share a ticket key's shape: character encodings, hash, cipher and key
+// sizes, elliptic curves and checksums. ISO-8859-1 matches as ISO-8859.
+const WELL_KNOWN_TICKET_SHAPED = new Set([
+  "UTF-8", "UTF-16", "UTF-32", "ISO-8859",
+  "SHA-1", "SHA-224", "SHA-256", "SHA-384", "SHA-512", "SHA3-224", "SHA3-256", "SHA3-384", "SHA3-512",
+  "AES-128", "AES-192", "AES-256", "RSA-2048", "RSA-3072", "RSA-4096",
+  "P-256", "P-384", "P-521", "CRC-32",
+]);
 
 // A document path resolves when it names a file inside the repository, relative to the repository
 // root or to the citing file. A fixture contract describes its own input/, so that is tried too.
@@ -46,7 +56,7 @@ export function unreadableCitations(text: string, citingFile: string, checkIds: 
     if (!resolvesInsideRepo(m[0], citingFile)) found.push(`document path that does not resolve inside the repository: ${m[0]}`);
   }
   for (const m of withoutLinks.matchAll(TICKET_ID)) {
-    if (!checkIds.has(m[0])) found.push(`ticket-style identifier: ${m[0]}`);
+    if (!checkIds.has(m[0]) && !WELL_KNOWN_TICKET_SHAPED.has(m[0])) found.push(`ticket-style identifier: ${m[0]}`);
   }
   for (const m of withoutLinks.matchAll(MILESTONE_CODE)) found.push(`milestone or finding code: ${m[0]}`);
   return found;
@@ -96,4 +106,23 @@ test("a planning-note path, a ticket key and a milestone code are reported; repo
   // a fixture contract may name a file in its own input/ directory
   const contract = join(repoRoot, "fixtures", "scan-soul-hardened", "contract.yaml");
   assert.deepEqual(unreadableCitations("The hardened SOUL.md fixture.", contract, checkIds), []);
+});
+
+test("encodings, hash and cipher sizes, curves, chip names and the F1 score are not citations", () => {
+  const readme = join(repoRoot, "README.md");
+  assert.deepEqual(unreadableCitations("Encoded as UTF-8 with SHA-256 on an M4 Max.", readme, new Set()), []);
+  assert.deepEqual(
+    unreadableCitations(
+      "UTF-16, ISO-8859-1, SHA-1, SHA3-512, AES-256, RSA-4096, P-384 and CRC-32 on an M1 Pro, an M2 Ultra or the M3 chip, with an F1 score and an F1-score.",
+      readme,
+      new Set(),
+    ),
+    [],
+  );
+  // the same shapes still report when nothing marks them as a technical name
+  assert.deepEqual(unreadableCitations("Blocked on UTF-9 until M4 ships (F2).", readme, new Set()), [
+    "ticket-style identifier: UTF-9",
+    "milestone or finding code: M4",
+    "milestone or finding code: F2",
+  ]);
 });
