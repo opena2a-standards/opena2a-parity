@@ -239,7 +239,10 @@ function sortKeysReplacer() {
     if (value && typeof value === "object" && !Array.isArray(value)) {
       if (seen.has(value as object)) return value;
       seen.add(value as object);
-      const sorted: Record<string, unknown> = {};
+      // A copy without a prototype: on a plain object, assigning a key named "__proto__" sets the
+      // prototype instead of creating a key, which would drop that key (and all under it) from the
+      // comparison on both sides.
+      const sorted: Record<string, unknown> = Object.create(null);
       for (const k of Object.keys(value as object).sort()) {
         sorted[k] = (value as Record<string, unknown>)[k];
       }

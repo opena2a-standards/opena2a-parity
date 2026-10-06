@@ -311,6 +311,44 @@ test("runFixture passes a leg on the first attempt when its object-valued error 
   assert.ok(!r.logged.some((l) => l.includes("[FAIL]")), r.logged.join("\n"));
 });
 
+// A key named "__proto__" in the CLI's JSON text is a key like any other to the comparison. (Parsed
+// from text on purpose: in an object literal it would set the prototype instead of creating the key.)
+const PROTO_KEY_ERROR = JSON.parse('{"name":"ghost","found":false,"ecosystem":"npm","error":{"code":"NOT_FOUND","message":"ghost","__proto__":{"cause":"timeout"}}}');
+
+test("isTransientProbeFailure does not drop a key named __proto__ before comparing an object-valued error", () => {
+  assert.equal(isTransientProbeFailure(PROTO_KEY_ERROR, OBJECT_ERROR_GOLDEN), true);
+  const goldenWithProtoKey = JSON.parse(JSON.stringify(PROTO_KEY_ERROR));
+  assert.equal(isTransientProbeFailure(PROTO_KEY_ERROR, goldenWithProtoKey), false);
+});
+
+test("runFixture fails a leg whose object-valued error differs from the golden's only under a __proto__ key", () => {
+  const r = runStubFixture(NOT_FOUND_CONTRACT, OBJECT_ERROR_GOLDEN, PROTO_KEY_ERROR);
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma")), r.logged.join("\n"));
+});
+
+test("runFixture fails a leg whose object-valued must-match key differs from the golden's only under a __proto__ key", () => {
+  const contract = `
+description: object-valued must-match stub
+kind: package-name
+package: ghost
+exercises:
+  hma: "{BIN} check {PACKAGE} --no-scan --json"
+participants:
+  - hma
+must_match:
+  - name
+  - scores
+may_differ: []
+`;
+  const golden = { name: "ghost", scores: { a: 1 } };
+  const payload = JSON.parse('{"name":"ghost","scores":{"a":1,"__proto__":{"admin":true}}}');
+  const r = runStubFixture(contract, golden, payload, 0);
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma") && l.includes("1 must-match field(s) drifted")), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes("__proto__")), r.logged.join("\n"));
+});
+
 test("runFixture compares an object-valued must-match key regardless of key order", () => {
   const contract = `
 description: object-valued must-match stub
