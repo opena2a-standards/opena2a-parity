@@ -119,7 +119,7 @@ test("encodings, hash and cipher sizes, curves, chip names and the F1 score are 
   assert.deepEqual(unreadableCitations("Encoded as UTF-8 with SHA-256 on an M4 Max.", readme, new Set()), []);
   assert.deepEqual(
     unreadableCitations(
-      "UTF-16, ISO-8859-1, SHA-1, SHA3-512, AES-256, RSA-4096, P-384 and CRC-32 on an M1 Pro, an M2 Ultra or the M3 chip, with an F1 score and an F1-score.",
+      "UTF-16, ISO-8859-1, SHA-1, SHA3-512, AES-256, RSA-4096, P-384 and CRC-32 on an M1 Pro, an M2 Ultra or the M3 chip, with an F1 score, an F1 Score and an F1-score.",
       readme,
       new Set(),
     ),
@@ -136,6 +136,8 @@ test("encodings, hash and cipher sizes, curves, chip names and the F1 score are 
     "milestone or finding code: M4",
     "milestone or finding code: F2",
   ]);
+  // a chip tier counts only as a whole word, so M4 Maxwell is still a code
+  assert.deepEqual(unreadableCitations("M4 Maxwell", readme, new Set()), ["milestone or finding code: M4"]);
 });
 
 test("CVE, CWE, ISO, RFC and IEEE identifiers and common protocol, codec and certificate names are not citations", () => {
