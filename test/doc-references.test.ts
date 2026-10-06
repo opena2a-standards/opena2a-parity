@@ -12,18 +12,23 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 const DOCUMENT_PATH = /[\w./~-]+\.(?:md|mdx|markdown|rst|adoc|txt|pdf|docx?)(?![\w])/g;
-const TICKET_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g;
+// Further hyphen or dot numbers belong to the same identifier, so CVE-2024-3094 and TLS-1.3 match whole.
+const TICKET_ID = /\b[A-Z][A-Z0-9]*-\d+(?:[.-]\d+)*\b/g;
 // A milestone code followed by a chip tier, "chip" or "score" is an Apple silicon chip (M4 Max) or the F1 score.
 // The word may follow one hyphen or any run of spaces, start upper- or lower-case, and be plural.
 const MILESTONE_CODE = /\b[MF]\d+\b(?!(?: +|-)(?:[Pp]ros?|[Mm]ax(?:es)?|[Uu]ltras?|[Cc]hips?|[Ss]cores?)\b)/g;
 
+// Public identifiers a reader can look up by their number: CVE and CWE entries, ISO, RFC and IEEE standards.
+const STANDARD_IDENTIFIER = /^(?:CVE-\d{4}-\d{4,}|CWE-\d+|ISO-\d+(?:-\d+)*|RFC-\d+|IEEE-\d+(?:\.\d+)*)$/;
+
 // Public technical names that share a ticket key's shape: character encodings, hash, cipher and key
-// sizes, elliptic curves and checksums. ISO-8859-1 matches as ISO-8859.
+// sizes, elliptic curves, checksums, protocol versions, codecs and the certificate standard.
 const WELL_KNOWN_TICKET_SHAPED = new Set([
-  "UTF-8", "UTF-16", "UTF-32", "ISO-8859",
-  "SHA-1", "SHA-224", "SHA-256", "SHA-384", "SHA-512", "SHA3-224", "SHA3-256", "SHA3-384", "SHA3-512",
-  "AES-128", "AES-192", "AES-256", "RSA-2048", "RSA-3072", "RSA-4096",
+  "UTF-7", "UTF-8", "UTF-16", "UTF-32",
+  "SHA-1", "SHA-2", "SHA-3", "SHA-224", "SHA-256", "SHA-384", "SHA-512", "SHA3-224", "SHA3-256", "SHA3-384", "SHA3-512",
+  "AES-128", "AES-192", "AES-256", "RSA-1024", "RSA-2048", "RSA-3072", "RSA-4096",
   "P-256", "P-384", "P-521", "CRC-32",
+  "HTTP-2", "HTTP-3", "TLS-1.0", "TLS-1.1", "TLS-1.2", "TLS-1.3", "H-264", "H-265", "X-509",
 ]);
 
 // A document path resolves when it names a file inside the repository, relative to the repository
@@ -57,7 +62,7 @@ export function unreadableCitations(text: string, citingFile: string, checkIds: 
     if (!resolvesInsideRepo(m[0], citingFile)) found.push(`document path that does not resolve inside the repository: ${m[0]}`);
   }
   for (const m of withoutLinks.matchAll(TICKET_ID)) {
-    if (!checkIds.has(m[0]) && !WELL_KNOWN_TICKET_SHAPED.has(m[0])) found.push(`ticket-style identifier: ${m[0]}`);
+    if (!checkIds.has(m[0]) && !WELL_KNOWN_TICKET_SHAPED.has(m[0]) && !STANDARD_IDENTIFIER.test(m[0])) found.push(`ticket-style identifier: ${m[0]}`);
   }
   for (const m of withoutLinks.matchAll(MILESTONE_CODE)) found.push(`milestone or finding code: ${m[0]}`);
   return found;
@@ -130,5 +135,30 @@ test("encodings, hash and cipher sizes, curves, chip names and the F1 score are 
     "ticket-style identifier: UTF-9",
     "milestone or finding code: M4",
     "milestone or finding code: F2",
+  ]);
+});
+
+test("CVE, CWE, ISO, RFC and IEEE identifiers and common protocol, codec and certificate names are not citations", () => {
+  const readme = join(repoRoot, "README.md");
+  for (const name of [
+    "CVE-2024-3094", "CVE-2021-44228", "CWE-79", "ISO-8601", "ISO-27001", "ISO-8859-1", "RFC-8259", "IEEE-754", "IEEE-802.11",
+    "UTF-7", "SHA-2", "SHA-3", "RSA-1024", "X-509", "HTTP-2", "HTTP-3",
+    "TLS-1.0", "TLS-1.1", "TLS-1.2", "TLS-1.3", "H-264", "H-265",
+  ]) {
+    assert.deepEqual(unreadableCitations(`Defined in ${name}.`, readme, new Set()), [], name);
+  }
+  assert.deepEqual(
+    unreadableCitations(
+      "ISO-8601, ISO-27001, CVE-2024-3094, RFC-8259, IEEE-754, X-509, HTTP-2, SHA-3, UTF-7, RSA-1024, TLS-1.3, H-264",
+      readme,
+      new Set(),
+    ),
+    [],
+  );
+  // an identifier that only resembles a standard shape is still reported, and reported whole
+  assert.deepEqual(unreadableCitations("Blocked on CVE-2024, TLS-1.4 and TEAM-2024-17.", readme, new Set()), [
+    "ticket-style identifier: CVE-2024",
+    "ticket-style identifier: TLS-1.4",
+    "ticket-style identifier: TEAM-2024-17",
   ]);
 });
