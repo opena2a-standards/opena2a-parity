@@ -279,6 +279,22 @@ test("runFixture fails a not-found leg on a registry timeout that carries every 
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
 });
 
+// A golden may record a structured error; an equal object is the same error, not a reworded one.
+const OBJECT_ERROR_GOLDEN = { name: "ghost", found: false, ecosystem: "npm", error: { code: "NOT_FOUND", message: "ghost" } };
+
+test("isTransientProbeFailure compares an object-valued error by value, not by reference", () => {
+  assert.equal(isTransientProbeFailure(structuredClone(OBJECT_ERROR_GOLDEN), OBJECT_ERROR_GOLDEN), false);
+  const otherCode = { ...OBJECT_ERROR_GOLDEN, error: { code: "TIMEOUT", message: "ghost" } };
+  assert.equal(isTransientProbeFailure(otherCode, OBJECT_ERROR_GOLDEN), true);
+});
+
+test("runFixture passes a leg on the first attempt when its object-valued error matches the golden's", () => {
+  const r = runStubFixture(NOT_FOUND_CONTRACT, OBJECT_ERROR_GOLDEN, OBJECT_ERROR_GOLDEN);
+  assert.equal(r.invocations, 1, r.logged.join("\n"));
+  assert.equal(r.rc, 0, r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.includes("[FAIL]")), r.logged.join("\n"));
+});
+
 test("unexpectedErrorReport names a golden without an error instead of diffing against undefined", () => {
   const report = unexpectedErrorReport("x × hma", 1, { name: "a", error: "boom" }, { name: "a", found: true });
   assert.match(report, /^\[FAIL\] x × hma: exit=1, error payload still present after 3 attempts; the golden records no error$/m);

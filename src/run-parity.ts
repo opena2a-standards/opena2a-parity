@@ -106,7 +106,11 @@ function carriesError(doc: unknown): boolean {
 export function isTransientProbeFailure(parsed: unknown, golden?: unknown): boolean {
   if (!carriesError(parsed)) return false;
   // Only the exact error the golden records is expected; any other error is still operational.
-  return !carriesError(golden) || (parsed as { error?: unknown }).error !== (golden as { error?: unknown }).error;
+  // Compared by JSON encoding, as diffKey does, so an object-valued error equal to the golden's matches.
+  return (
+    !carriesError(golden) ||
+    JSON.stringify((parsed as { error?: unknown }).error) !== JSON.stringify((golden as { error?: unknown }).error)
+  );
 }
 
 // Runs the CLI and parses its JSON, retrying only on a transient probe failure
