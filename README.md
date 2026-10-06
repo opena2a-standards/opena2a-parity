@@ -56,7 +56,7 @@ that rewords its error re-baselines its golden first, like any other intended ou
 1. Create `fixtures/<name>/input/` with the input artefacts. The root `.gitignore` re-includes
    paths under `fixtures/`, so its secret-file rules and a contributor-local rule that matches a
    file there do not hide an input. Three cases still do, and need `git add -f`: inputs matching
-   `node_modules/`, `*.log` or `.DS_Store`, which stay ignored under `fixtures/` too; files an
+   `node_modules`, `*.log` or `.DS_Store`, which stay ignored under `fixtures/` too; files an
    input's own `.gitignore` lists; and every input, if a contributor-local rule ignores the
    `fixtures` directory itself (git cannot re-include a file whose parent directory is excluded).
    Check `git status` shows every input before committing.
