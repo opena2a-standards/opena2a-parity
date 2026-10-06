@@ -49,7 +49,8 @@ even where the contract lists `error` under `may_differ` (which lets the wording
 CLIs). An error the golden does not record is retried up to three times, and if it still differs
 after the last attempt the leg fails: on `check-not-found` a registry timeout carries the same
 `name`, `found` and `ecosystem` as a real not-found, so the error is what tells them apart. A CLI
-that rewords its error re-baselines its golden first, like any other intended output change.
+that rewords its error on purpose re-baselines its golden first, like any other intended output
+change; if the rewording was not intended, it is a CLI regression and the golden stays as it is.
 
 ## Adding a fixture
 

@@ -300,6 +300,21 @@ test("the unexpected-error report offers re-baselining as a conditional, not a v
   }
 });
 
+test("README.md and the retry comment give a reworded error the report's two outcomes: re-baseline if intended, CLI regression if not", () => {
+  const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  // the sentences wrap across lines, and the source one across comment lines, so read each as one line
+  const docs = [
+    ["README.md", read("README.md").replace(/\s+/g, " ")],
+    ["src/run-parity.ts", read("src/run-parity.ts").replace(/\n\s*\/\/ ?/g, " ").replace(/\s+/g, " ")],
+  ] as const;
+  for (const [path, text] of docs) {
+    const sentence = text.match(/A CLI that rewords (?:its|that) error[^.]*\./)?.[0];
+    assert.ok(sentence, `${path}: no sentence on a CLI that rewords its error`);
+    assert.match(sentence, /on purpose re-baselines its golden first/, `${path}: ${sentence}`);
+    assert.match(sentence, /if the rewording was not intended, it is a CLI regression and the golden stays as it is\.$/, `${path}: ${sentence}`);
+  }
+});
+
 test("runFixture fails a not-found leg on a registry timeout that carries every must-match key", () => {
   // name, found: false and ecosystem all match the golden; only the error says the registry was not reached
   const timeout = { name: "ghost", found: false, error: "Registry request timed out after 10000ms", ecosystem: "npm" };

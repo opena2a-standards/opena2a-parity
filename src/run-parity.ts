@@ -78,8 +78,9 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
 // it still differs after the last attempt runFixture fails the leg whatever the
 // must-match keys say: a timeout payload there carries name, found: false and
 // ecosystem with the expected values, so the error is the only field that tells
-// "not found" from "not reached". A CLI that rewords that error re-baselines its
-// golden first, like any other intended output change.
+// "not found" from "not reached". A CLI that rewords that error on purpose
+// re-baselines its golden first, like any other intended output change; if the
+// rewording was not intended, it is a CLI regression and the golden stays as it is.
 //
 // Goldens are copied from normalized captures, so the decision is made on the
 // normalized payload, never the raw one.
