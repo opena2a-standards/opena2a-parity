@@ -49,11 +49,25 @@ export function committedRules(text: string): string[] {
     .filter((l) => l.trim() !== "" && !l.startsWith("#"));
 }
 
+// A git hook exports GIT_DIR and the other variables that tie git to the hook's repository, and a git
+// child that inherits them answers for that repository instead of for the directory it runs in. The
+// checkout check runs git without the names `git rev-parse --local-env-vars` lists, as githooks(5)
+// advises for a hook that runs git in another repository.
+const localEnvVars = (spawnSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8" }).stdout ?? "")
+  .split("\n")
+  .filter((name) => name !== "");
+
+export function gitEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const clean = { ...env };
+  for (const name of localEnvVars) delete clean[name];
+  return clean;
+}
+
 // git check-ignore answers only inside a work tree, and inside another repository's work tree it
 // would also apply that repository's rules. A tree that is not its own checkout, such as one
 // extracted with `git archive`, skips the checks that ask git instead of failing them.
-export function checkoutSkipReason(root: string): string | false {
-  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+export function checkoutSkipReason(root: string, env: Record<string, string | undefined>): string | false {
+  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8", env: gitEnv(env) });
   if (r.error || r.status !== 0) {
     return "needs a git checkout; this tree is not one (for example, a tree extracted with git archive)";
   }
@@ -64,7 +78,7 @@ export function checkoutSkipReason(root: string): string | false {
 }
 
 const skip = skipReason(process.env.GITHUB_REPOSITORY);
-const gitSkip = skip || checkoutSkipReason(repoRoot);
+const gitSkip = skip || checkoutSkipReason(repoRoot, process.env);
 
 test(".gitignore carries only the repository's own rules", { skip }, () => {
   const rules = committedRules(readFileSync(join(repoRoot, ".gitignore"), "utf8"));
@@ -176,16 +190,26 @@ test("the ignore-file checks run locally and in this repository, and skip for a 
 });
 
 test("the checks that ask git skip in a tree that is not its own git checkout", () => {
-  const root = mkdtempSync(join(tmpdir(), "parity-checkout-"));
+  const hook = mkdtempSync(join(tmpdir(), "parity-hook-"));
   try {
-    // An extracted tree, with no .git of its own.
-    assert.match(String(checkoutSkipReason(root)), /needs a git checkout/);
-    assert.equal(spawnSync("git", ["init", "-q"], { cwd: root }).status, 0);
-    assert.equal(checkoutSkipReason(root), false);
-    // An extracted tree inside another repository's work tree.
-    mkdirSync(join(root, "extracted"));
-    assert.match(String(checkoutSkipReason(join(root, "extracted"))), /inside another repository's work tree/);
+    assert.equal(spawnSync("git", ["init", "-q"], { cwd: hook, env: gitEnv(process.env) }).status, 0);
+    // Run from a git hook, the suite inherits a GIT_DIR naming the hook's repository; the answers
+    // stay the same.
+    for (const env of [process.env, { ...process.env, GIT_DIR: join(hook, ".git") }]) {
+      const root = mkdtempSync(join(tmpdir(), "parity-checkout-"));
+      try {
+        // An extracted tree, with no .git of its own.
+        assert.match(String(checkoutSkipReason(root, env)), /needs a git checkout/);
+        assert.equal(spawnSync("git", ["init", "-q"], { cwd: root, env: gitEnv(env) }).status, 0);
+        assert.equal(checkoutSkipReason(root, env), false);
+        // An extracted tree inside another repository's work tree.
+        mkdirSync(join(root, "extracted"));
+        assert.match(String(checkoutSkipReason(join(root, "extracted"), env)), /inside another repository's work tree/);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(hook, { recursive: true, force: true });
   }
 });
