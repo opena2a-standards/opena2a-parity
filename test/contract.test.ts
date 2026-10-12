@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, rmSync, chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -654,9 +654,9 @@ function stubContract(fields: Partial<Record<"kind" | "exercises" | "participant
 // stub CLI that counts its runs and prints the arguments it was given beside its score. Every fixture
 // carries an input/ directory, a golden for hma and a skip sentinel for each CLI (a participant's
 // sentinel is not read), so only the contract decides the result, or `golden` where one is given: the
-// text of the fixture's own hma golden. `alone.args` is the arguments in the capture of the fixture's
-// own run, undefined where it wrote none.
-function runBesideValidFixture(name: string, contractYaml: string, golden = JSON.stringify({ score: 7 })) {
+// text of the fixture's own hma golden, or a function that puts something at the golden's path. `alone.args`
+// is the arguments in the capture of the fixture's own run, undefined where it wrote none.
+function runBesideValidFixture(name: string, contractYaml: string, golden: string | ((goldenPath: string) => void) = JSON.stringify({ score: 7 })) {
   const dir = mkdtempSync(join(tmpdir(), "parity-load-"));
   const counter = join(dir, "n");
   const bin = join(dir, "stub.mjs");
@@ -666,12 +666,14 @@ import { readFileSync, writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(counter)}, String(Number(readFileSync(${JSON.stringify(counter)}, "utf8")) + 1));
 console.log(JSON.stringify({ score: 7, args: process.argv.slice(2) }));
 `);
-  const addFixture = (fixtureName: string, yaml: string, goldenText: string) => {
+  const addFixture = (fixtureName: string, yaml: string, goldenText: string | ((goldenPath: string) => void)) => {
     const fixture = join(dir, "fixtures", fixtureName);
     mkdirSync(join(fixture, "expected"), { recursive: true });
     mkdirSync(join(fixture, "input"));
     writeFileSync(join(fixture, "contract.yaml"), yaml);
-    writeFileSync(join(fixture, "expected", "hma.json"), goldenText);
+    const goldenPath = join(fixture, "expected", "hma.json");
+    if (typeof goldenText === "string") writeFileSync(goldenPath, goldenText);
+    else goldenText(goldenPath);
     for (const cli of ["hma", "opena2a", "ai-trust"]) writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
   };
   addFixture(name, contractYaml, golden);
@@ -840,3 +842,39 @@ test("runFixtures fails the leg of a participant whose golden is not valid JSON,
   assert.equal(beside.runs, 1, "the valid fixture after it ran its CLI, and nothing else did");
   assert.ok(beside.logged.some((line) => line.startsWith("[OK]   valid × hma:")), beside.logged.join("\n"));
 });
+
+// Each golden below could not be opened or read, and the error was thrown out of runFixture, so the run
+// stopped before the valid fixture ran. `reason` is the error the read fails with, as the leg's line names it.
+const UNREADABLE_GOLDENS: { title: string; name: string; golden: (goldenPath: string) => void; reason: string; skip?: string }[] = [
+  {
+    title: "a directory",
+    name: "directory-golden",
+    golden: (goldenPath) => mkdirSync(goldenPath),
+    reason: "EISDIR: illegal operation on a directory, read",
+  },
+  {
+    title: "a file it may not read",
+    name: "closed-golden",
+    golden: (goldenPath) => {
+      writeFileSync(goldenPath, JSON.stringify({ score: 7 }));
+      chmodSync(goldenPath, 0o000);
+    },
+    reason: "EACCES: permission denied, open '<path>'",
+    skip: process.getuid?.() === 0 ? "root reads a file it has no permission bits for" : undefined,
+  },
+];
+
+for (const { title, name, golden, reason, skip } of UNREADABLE_GOLDENS) {
+  test(`runFixtures fails the leg of a participant whose golden is ${title}, runs no CLI for it, and runs the next fixture`, { skip }, () => {
+    const { alone, beside } = runBesideValidFixture(name, stubContract(), golden);
+    assert.equal(alone.rc, 1, alone.logged.join("\n"));
+    assert.deepEqual(alone.logged.slice(1), [`[SKIP] ${name} × opena2a: opena2a does not exercise this stub`, `[SKIP] ${name} × ai-trust: ai-trust does not exercise this stub`]);
+    const goldenPath = /the golden at (.*hma\.json) could not be read/.exec(alone.logged[0])?.[1] ?? "";
+    assert.ok(goldenPath.endsWith(join(name, "expected", "hma.json")), alone.logged.join("\n"));
+    assert.equal(alone.logged[0], `\n[FAIL] ${name} × hma: the golden at ${goldenPath} could not be read (${reason.replace("<path>", goldenPath)})`);
+    assert.equal(alone.runs, 0, "the fixture ran a CLI");
+    assert.equal(beside.failed, 1, beside.logged.join("\n"));
+    assert.equal(beside.runs, 1, "the valid fixture after it ran its CLI, and nothing else did");
+    assert.ok(beside.logged.some((line) => line.startsWith("[OK]   valid × hma:")), beside.logged.join("\n"));
+  });
+}

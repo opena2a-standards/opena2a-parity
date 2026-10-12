@@ -67,8 +67,9 @@ place of `{FIXTURE_INPUT_DIR}`: in a `kind: package-name` fixture `{FIXTURE_INPU
 which is not one, and `{FIXTURE_INPUT_DIR}` alone is empty, which would match at every position
 of every string.
 
-A golden that is not valid JSON fails its participant's leg without running that CLI, and the
-run goes on to the remaining legs and fixtures.
+A golden that is not valid JSON, or that cannot be read (a directory, or a file without read
+permission), fails its participant's leg without running that CLI, and the run goes on to the
+remaining legs and fixtures.
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 
