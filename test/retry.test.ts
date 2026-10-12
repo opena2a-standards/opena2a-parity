@@ -4,7 +4,7 @@ import fs, { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, exists
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isTransientProbeFailure, probeWithRetry, runFixture, unexpectedErrorReport } from "../src/run-parity.ts";
+import { isTransientProbeFailure, probeWithRetry, runFixture, unexpectedErrorReport, type GoldenReader } from "../src/run-parity.ts";
 
 test("isTransientProbeFailure fires only on an operational error payload", () => {
   // the exact timeout shape ai-trust emits
@@ -218,7 +218,7 @@ process.exit(1);
 // invocation count, every line the harness printed and the capture it wrote (undefined if none).
 // `encode` turns the golden and the payload into JSON text; `String` hands over text as it is.
 // `peer`, for a contract that also lists opena2a, is that participant's golden and the payload its
-// stub prints with exit 0.
+// stub prints with exit 0. `readGolden`, when given, replaces the harness's own golden reader.
 function runStubFixture(
   contract: string,
   golden: unknown,
@@ -226,6 +226,7 @@ function runStubFixture(
   exit = 1,
   encode: (value: unknown) => string = (value) => JSON.stringify(value),
   peer?: { golden: unknown; payload: unknown },
+  readGolden?: GoldenReader,
 ): { rc: number; invocations: number; logged: string[]; capture: string | undefined } {
   const dir = mkdtempSync(join(tmpdir(), "parity-stub-fixture-"));
   const fixture = join(dir, "fixtures", "stub");
@@ -255,7 +256,12 @@ process.exitCode = ${exit};
   console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   try {
-    const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: peer ? `node ${peerBin}` : "unused", "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
+    const rc = runFixture(
+      "stub",
+      { hma: `node ${bin}`, opena2a: peer ? `node ${peerBin}` : "unused", "ai-trust": "unused" },
+      { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") },
+      readGolden,
+    );
     const capturePath = join(dir, "actual", "stub", "hma.json");
     const capture = existsSync(capturePath) ? readFileSync(capturePath, "utf8") : undefined;
     return { rc, invocations: Number(readFileSync(counter, "utf8")), logged, capture };
@@ -694,15 +700,52 @@ test("runFixture fails a fixture whose must-match key resolves in no participant
     r.logged.join("\n"),
   );
   assert.ok(r.logged.some((l) => l.includes("findings.0.checkId")), "the report names the key syntax that resolves");
-  // neither key is counted among the fields that compared equal, and the leg's line says so
-  assert.ok(!r.logged.some((l) => /[12] must-match fields equal/.test(l)), r.logged.join("\n"));
+  // neither key is counted among the fields that compared equal, and the leg's line says so without
+  // an [OK]: a leg that compared no field has nothing to call equal
+  assert.ok(!r.logged.some((l) => /must-match fields equal/.test(l)), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
   assert.ok(
-    r.logged.some((l) => l.startsWith("[OK]   stub × hma: 0 must-match fields") && l.endsWith("not compared: findings[0].checkId, scroe (in no golden)")),
+    r.logged.includes("[NONE] stub × hma: no must-match field compared; not compared: findings[0].checkId, scroe (in no golden)"),
     r.logged.join("\n"),
   );
   // the leg still runs, so the capture a re-baseline reads is written
   assert.equal(r.invocations, 1);
   assert.ok(r.capture !== undefined);
+});
+
+test("runFixture does not report a must-match key as in no golden while a golden that may carry it could not be read", () => {
+  // scanStatus is carried only by opena2a's golden, and reading that golden throws the RangeError a
+  // file above 2 GiB does. The key may well resolve there, so the fixture is not checked for keys in
+  // no golden; the opena2a leg fails on the read instead.
+  const contract = `
+description: unreadable golden stub
+kind: package-name
+package: "@scope/server"
+exercises:
+  hma: "{BIN}"
+  opena2a: "{BIN}"
+participants:
+  - hma
+  - opena2a
+must_match:
+  - name
+  - scanStatus
+may_differ: []
+`;
+  const golden = { name: "@scope/server" };
+  const peerGolden = { ...golden, scanStatus: "warnings" };
+  const readGolden: GoldenReader = (goldenPath) => {
+    if (goldenPath.endsWith(join("expected", "opena2a.json"))) throw new RangeError("File size is greater than 2 GiB");
+    return JSON.parse(readFileSync(goldenPath, "utf8"));
+  };
+  const r = runStubFixture(contract, golden, golden, 0, undefined, { golden: peerGolden, payload: peerGolden }, readGolden);
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.includes("[CONTRACT]")), r.logged.join("\n"));
+  assert.ok(
+    r.logged.some((l) => l.includes("[FAIL] stub × opena2a: the payload or its golden could not be compared (RangeError: File size is greater than 2 GiB)")),
+    r.logged.join("\n"),
+  );
+  assert.ok(r.logged.includes("[OK]   stub × hma: 2 must-match fields equal apart from object key order"), r.logged.join("\n"));
 });
 
 test("runFixture compares a must-match key that indexes an array with a numeric segment", () => {

@@ -37,7 +37,7 @@ fixtures/
 `contract.yaml` per fixture. Fields:
 
 - `exercises` — which CLI commands the fixture runs
-- `participants` — list of CLIs for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture
+- `participants` — list of CLIs for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture, and so does an empty sentinel
 - `must_match` — list of keys equal across participating CLIs apart from object key order. A key is
   a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
   `findings[0].checkId`). A key that resolves in no participant's golden fails the fixture, since it
@@ -54,8 +54,8 @@ and then the CLIs are compared with each other: the goldens of the participating
 outputs, hold the same value for the key. A CLI whose golden omits a key is left out of that
 key's comparison between CLIs (ai-trust's `scanStatus` on `check-registered-ai`), and its output
 must omit the key too. A fixture whose goldens disagree on a `must_match` key fails even when
-every CLI matches its own golden. If the CLIs differ on purpose, the key belongs under
-`may_differ` with the reason.
+every CLI matches its own golden. If the CLIs differ on purpose, move the key from `must_match`
+to `may_differ`, with the reason.
 
 An `error` in a CLI's output is checked against that CLI's own golden, after normalization,
 even where the contract lists `error` under `may_differ` (which lets the wording differ between
@@ -77,9 +77,12 @@ change; if the rewording was not intended, it is a CLI regression and the golden
    input's own `.gitignore` lists; and every input, if a contributor-local rule ignores the
    `fixtures` directory itself (git cannot re-include a file whose parent directory is excluded).
    Check `git status` shows every input before committing.
-2. Run all three CLIs manually against it; save stable outputs under `fixtures/<name>/expected/`.
+2. Run each CLI that exercises it manually against it; save stable outputs under `fixtures/<name>/expected/`.
 3. Write `contract.yaml` naming what must match and what may differ (with reasons).
-4. Open a PR; CI runs the harness against your new fixture.
+4. For each CLI that does not exercise the fixture, leave it out of `participants` and create
+   `fixtures/<name>/expected/<cli>.skip` saying why it does not. The harness fails the fixture
+   for a non-participant CLI with no sentinel or an empty one.
+5. Open a PR; CI runs the harness against your new fixture.
 
 ## Re-baselining goldens (golden-first)
 
@@ -99,7 +102,8 @@ golden landed here is live for them immediately — no pin bump.
    `cp actual/<fixture>/<cli>.json fixtures/<fixture>/expected/<cli>.json`
    The harness also compares the goldens with each other, so a `must_match` field moved in one
    CLI's golden alone fails the fixture for every consumer. Move it in the golden of every CLI
-   that carries it, or list the key under `may_differ` with the reason until the CLIs agree again.
+   that carries it, or move the key from `must_match` to `may_differ`, with the reason, until the
+   CLIs agree again.
    `npm test` checks the committed goldens for this without the CLIs.
 4. Commit to `main` with a message naming the CLI change that motivated the
    re-baseline (e.g. the consumer PR number). This repo intentionally has no required
