@@ -254,7 +254,7 @@ export function exercisesProblems(contract: Pick<FixtureContract, "exercises">):
   }
   // An entry left without a value is reported when the fixture runs, as a participant with no exercises entry.
   return Object.entries(exercises).flatMap(([cli, command]) =>
-    command == null || typeof command === "string" ? [] : [`exercises entry ${cli} is not a command string: ${JSON.stringify(command)}`],
+    command == null || typeof command === "string" ? [] : [`exercises entry ${cli} is not a command string: ${formatEntry(command)}`],
   );
 }
 
@@ -263,14 +263,14 @@ export function participantsProblems(contract: Pick<FixtureContract, "participan
   const entries: unknown = contract.participants;
   if (!Array.isArray(entries)) return [`participants is not a list of CLIs (${clis.join(", ")})`];
   return entries.flatMap((cli: unknown, i) =>
-    typeof cli === "string" && clis.includes(cli) ? [] : [`participants entry ${i + 1} is not one of ${clis.join(", ")}: ${JSON.stringify(cli)}`],
+    typeof cli === "string" && clis.includes(cli) ? [] : [`participants entry ${i + 1} is not one of ${clis.join(", ")}: ${formatEntry(cli)}`],
   );
 }
 
 // A rule field that is missing or not a string. An empty replacement is a string: it deletes what the pattern matches.
 function ruleFieldProblems(name: string, field: string, value: unknown, emptyAllowed = false): string[] {
   if (value == null || (value === "" && !emptyAllowed)) return [`${name} has no ${field}`];
-  return typeof value === "string" ? [] : [`${name} ${field} is not a string: ${JSON.stringify(value)}`];
+  return typeof value === "string" ? [] : [`${name} ${field} is not a string: ${formatEntry(value)}`];
 }
 
 export function normalizeProblems(contract: Pick<FixtureContract, "normalize">): string[] {
@@ -280,7 +280,7 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">):
   rules.forEach((rule: unknown, i) => {
     const name = `normalize rule ${i + 1}`;
     if (rule === null || typeof rule !== "object" || Array.isArray(rule)) {
-      problems.push(`${name} is not a mapping with a kind: ${JSON.stringify(rule)}`);
+      problems.push(`${name} is not a mapping with a kind: ${formatEntry(rule)}`);
       return;
     }
     const { kind, path, pattern, replacement } = rule as Record<string, unknown>;
@@ -301,7 +301,7 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">):
       problems.push(
         kind == null
           ? `${name} has no kind; a rule is strip_key or replace_regex`
-          : `${name} kind is neither strip_key nor replace_regex: ${JSON.stringify(kind)}`,
+          : `${name} kind is neither strip_key nor replace_regex: ${formatEntry(kind)}`,
       );
     }
   });

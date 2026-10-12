@@ -197,6 +197,28 @@ console.log(JSON.stringify({ score: 7 }));
       problem: "normalize rule 1 (strip_key) path is not a string: 5",
     },
     "empty-contract": { lines: null, problem: 'is not a mapping of contract fields (README.md "Contract model")' },
+    // A self-referencing YAML alias (such as &a [*a]) in one of these fields is named too: JSON.stringify
+    // throws on it ("Converting circular structure to JSON"), so the value is printed with formatEntry.
+    "alias-exercises": {
+      lines: ['exercises: &e { hma: "{BIN}", self: *e }', ...participants],
+      problem: "exercises entry self is not a command string: <ref *1> { hma: '{BIN}', self: [Circular *1] }",
+    },
+    "alias-participants": {
+      lines: [...exercises, "participants: [hma, &a [*a]]"],
+      problem: "participants entry 2 is not one of hma, opena2a, ai-trust: <ref *1> [ [Circular *1] ]",
+    },
+    "alias-normalize-rule": {
+      lines: [...exercises, ...participants, "normalize: [&a [*a]]"],
+      problem: "normalize rule 1 is not a mapping with a kind: <ref *1> [ [Circular *1] ]",
+    },
+    "alias-normalize-kind": {
+      lines: [...exercises, ...participants, "normalize: [{ kind: &k [*k] }]"],
+      problem: "normalize rule 1 kind is neither strip_key nor replace_regex: <ref *1> [ [Circular *1] ]",
+    },
+    "alias-normalize-replacement": {
+      lines: [...exercises, ...participants, "normalize: [{ kind: replace_regex, pattern: x, replacement: &r [*r] }]"],
+      problem: "normalize rule 1 (replace_regex) replacement is not a string: <ref *1> [ [Circular *1] ]",
+    },
   };
   const addFixture = (name: string, lines: string[] | null) => {
     const fixture = join(dir, "fixtures", name);
