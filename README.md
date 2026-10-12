@@ -55,30 +55,33 @@ fixtures/
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
 - `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs).
   A rule is `strip_key` with a `path`, or `replace_regex` with a `pattern` (a regular expression,
-  where every `{FIXTURE_INPUT_DIR}` stands for the fixture's input directory, matched literally, or
-  for an empty string in a `kind: package-name` fixture, which has none) and a `replacement`
+  where every `{FIXTURE_INPUT_DIR}` stands for the fixture's input directory, matched literally; a
+  `kind: package-name` fixture has none) and a `replacement`
 
 A `contract.yaml` that is not one valid YAML document (a syntax error, a second document, a
 repeated key) or that is not a mapping fails the fixture before any CLI runs, and the run goes on
 to the next fixture. So do an `exercises` that is not a mapping or that maps a CLI to a number,
 list or mapping, a `participants` entry that names no CLI, and a `normalize` rule with a numeric
-`path` or a `pattern` that is empty or not a regular expression with what the fixture puts in
-place of `{FIXTURE_INPUT_DIR}`: in a `kind: package-name` fixture `{FIXTURE_INPUT_DIR}*` is `*`,
-which is not one, and `{FIXTURE_INPUT_DIR}` alone is empty, which would match at every position
-of every string. So does a `pattern` that holds `{FIXTURE_INPUT_DIR}` and can match empty text
-with that value, unless its `replacement` is empty, which inserts nothing: there
-`(?:{FIXTURE_INPUT_DIR})` is `(?:)`, which is not empty and matches at every position of every
-string too, `\b{FIXTURE_INPUT_DIR}` is `\b`, which matches empty text next to each word, and
-`({FIXTURE_INPUT_DIR})?` matches the empty string in any fixture. An assertion (`^`, `$`, `\b`,
-`\B` or a lookaround) counts as able to match empty text whatever it asserts.
+`path` or a `pattern` that is empty or not a regular expression the engine can run with the input
+directory in place of `{FIXTURE_INPUT_DIR}` (`[a-{FIXTURE_INPUT_DIR}]` is not one, and neither is
+one too large to compile). So does a `pattern` that holds `{FIXTURE_INPUT_DIR}` in a
+`kind: package-name` fixture, which has no input directory for it to stand for: with an empty
+string there, `{FIXTURE_INPUT_DIR}*` would be `*`, which is not a regular expression,
+`(?:{FIXTURE_INPUT_DIR})` would be `(?:)`, which matches at every position of every string, and
+`{FIXTURE_INPUT_DIR}.*` with an empty `replacement` would delete every string value. So does a
+`pattern` that holds `{FIXTURE_INPUT_DIR}` and can match empty text with the input directory
+there, unless its `replacement` is empty, which inserts nothing: `({FIXTURE_INPUT_DIR})?` matches
+the empty string, and `\b|{FIXTURE_INPUT_DIR}` matches empty text next to each word. An assertion
+(`^`, `$`, `\b`, `\B` or a lookaround) counts as able to match empty text whatever it asserts.
 
 A golden that is not valid JSON, that is not a file (a directory or a FIFO), or that cannot be
 opened (a file without read permission, or a symbolic link that dangles or loops) fails its
 participant's leg without running that CLI, and the run goes on to the remaining legs and
-fixtures. A `contract.yaml` that is a directory, a FIFO or a file without read permission fails
-its fixture before any CLI runs, a skip sentinel that is one of those fails its fixture as an empty
-one does, and a capture that cannot be written (its path under `actual/` is a directory) fails its
-participant's leg.
+fixtures. A `contract.yaml` that is a directory, a FIFO, a file without read permission or a
+symbolic link that dangles or loops fails its fixture before any CLI runs, a skip sentinel that is
+a directory, a FIFO or a file without read permission fails its fixture as an empty one does, and
+a capture whose path under `actual/` is not a file (a directory or a FIFO) or that cannot be
+written (its fixture's directory there is a file) fails its participant's leg.
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 

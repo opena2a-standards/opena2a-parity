@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, lstatSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, lstatSync, statSync, type Stats } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
@@ -301,16 +301,20 @@ function ruleFieldProblems(name: string, field: string, value: unknown, emptyAll
 }
 
 // fixtureInputDir is what the fixture puts in place of {FIXTURE_INPUT_DIR}: its input directory, or an
-// empty string for a kind: package-name fixture. A pattern is compiled with that value, as normalize
-// compiles it: one that is a regular expression only with another value there ({FIXTURE_INPUT_DIR}*
-// with an empty string is *) passed this check and threw when the first output was normalized. One
-// that is empty with that value ({FIXTURE_INPUT_DIR} alone with an empty string) passed as a pattern
-// that is not empty, and matched at every position of every string: "ab" became "<IN>a<IN>b<IN>".
-// So did one that is not empty with that value and can match empty text ((?:{FIXTURE_INPUT_DIR}) with
-// an empty string is (?:)), so a pattern that holds the placeholder fails if canMatchEmpty finds it can.
-// Running it on an empty string alone passed \b{FIXTURE_INPUT_DIR}, which turned "ab cd" into
-// "<IN>ab<IN> <IN>cd<IN>". A rule whose replacement is empty is not checked for this: where it matched
-// no text it inserts nothing.
+// empty string for a kind: package-name fixture, which has none. So a rule there whose pattern holds the
+// placeholder fails: with an empty string in its place, {FIXTURE_INPUT_DIR}* was *, which is not a
+// regular expression, {FIXTURE_INPUT_DIR} alone matched at every position of every string, and
+// {FIXTURE_INPUT_DIR}.* with an empty replacement deleted every string value, which can hide a
+// must-match difference.
+//
+// Any other pattern is compiled with the input directory in place of the placeholder, as normalize
+// compiles it, so one that is a regular expression only with another value there
+// ([a-{FIXTURE_INPUT_DIR}] is one with an empty string) fails here instead of throwing when the first
+// output is normalized, and it is run, since the engine throws for some only then. One that holds the
+// placeholder and can match empty text, as canMatchEmpty finds, fails too: ({FIXTURE_INPUT_DIR})? turned
+// "ab" into "<IN>a<IN>b<IN>", and \b|{FIXTURE_INPUT_DIR}, which matches empty text only next to a word,
+// turned "ab cd" into "<IN>ab<IN> <IN>cd<IN>". A rule whose replacement is empty is not checked for
+// this: where it matched no text it inserts nothing.
 export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, fixtureInputDir: string): string[] {
   const rules: unknown = contract.normalize ?? [];
   if (!Array.isArray(rules)) return ["normalize is not a list of rules"];
@@ -326,28 +330,31 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, 
       problems.push(...ruleFieldProblems(`${name} (strip_key)`, "path", path));
     } else if (kind === "replace_regex") {
       const patternProblems = ruleFieldProblems(`${name} (replace_regex)`, "pattern", pattern);
-      if (patternProblems.length === 0) {
-        // Each line says what the placeholder became: a pattern that is empty here is not written
-        // empty, and the other two quote the pattern as compiled.
-        const holdsPlaceholder = (pattern as string).includes(INPUT_DIR_PLACEHOLDER);
-        const standingFor = holdsPlaceholder
-          ? ` with ${INPUT_DIR_PLACEHOLDER} standing for ${fixtureInputDir === "" ? "an empty string" : "the input directory"}`
-          : "";
-        if ((pattern as string).replaceAll(INPUT_DIR_PLACEHOLDER, () => fixtureInputDir) === "") {
-          patternProblems.push(`${name} (replace_regex) pattern is empty${standingFor}, so it would match at every position of every string`);
-        } else {
-          let compiled: RegExp | undefined;
-          try {
-            compiled = rulePattern(pattern as string, fixtureInputDir);
-          } catch (err) {
-            patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
-          }
-          // A pattern written without the placeholder is left as its author wrote it: ^$ replaces a value that is an empty string.
-          if (compiled && holdsPlaceholder && replacement !== "" && canMatchEmpty(compiled.source)) {
-            patternProblems.push(
-              `${name} (replace_regex) pattern can match empty text${standingFor}: ${compiled} would insert the replacement where it matched no text`,
-            );
-          }
+      const holdsPlaceholder = patternProblems.length === 0 && (pattern as string).includes(INPUT_DIR_PLACEHOLDER);
+      if (holdsPlaceholder && fixtureInputDir === "") {
+        patternProblems.push(
+          `${name} (replace_regex) pattern holds ${INPUT_DIR_PLACEHOLDER}, but a kind: package-name fixture has no input directory for it to stand for`,
+        );
+      } else if (patternProblems.length === 0) {
+        // Each line quotes the pattern as compiled, which says what the placeholder became.
+        const standingFor = holdsPlaceholder ? ` with ${INPUT_DIR_PLACEHOLDER} standing for the input directory` : "";
+        let compiled: RegExp | undefined;
+        try {
+          const candidate = rulePattern(pattern as string, fixtureInputDir);
+          // The engine compiles a pattern the first time it runs it, once for text of one-byte characters
+          // and once for text with a wider one, and only then throws for one too large to compile: 100,000
+          // literal characters passed new RegExp and threw when the first output was normalized.
+          candidate.exec("");
+          candidate.exec(WIDE_CHARACTER);
+          compiled = candidate;
+        } catch (err) {
+          patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
+        }
+        // A pattern written without the placeholder is left as its author wrote it: ^$ replaces a value that is an empty string.
+        if (compiled && holdsPlaceholder && replacement !== "" && canMatchEmpty(compiled.source)) {
+          patternProblems.push(
+            `${name} (replace_regex) pattern can match empty text${standingFor}: ${compiled} would insert the replacement where it matched no text`,
+          );
         }
       }
       problems.push(...patternProblems, ...ruleFieldProblems(`${name} (replace_regex)`, "replacement", replacement, true));
@@ -363,6 +370,8 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, 
 }
 
 const INPUT_DIR_PLACEHOLDER = "{FIXTURE_INPUT_DIR}";
+// A character outside Latin-1, which makes the text that holds it one of two-byte characters.
+const WIDE_CHARACTER = String.fromCharCode(0x100);
 
 // A replace_regex pattern as normalize applies it: every {FIXTURE_INPUT_DIR} stands for the fixture's
 // input directory, matched literally. The directory is put in by a function: given as a replacement
@@ -379,6 +388,10 @@ export function rulePattern(pattern: string, fixtureInputDir: string): RegExp {
 // so it counts as able to match empty text whatever it asserts, as \b does next to a word and (?=b)
 // before a b; so does a backreference, which matches empty text where its group took no part. Each other
 // part matches a character unless its quantifier allows it to repeat zero times.
+//
+// The groups are walked with a list of those open, not a call per group: the engine runs a pattern that
+// nests 200,000 groups, and one that nested 3,000 overflowed the call stack here, which threw a RangeError
+// out of the run before the remaining fixtures ran.
 function canMatchEmpty(source: string): boolean {
   // Its last alternative matches the empty string, so this reports how many groups the source holds and
   // whether one is named, which decide what \1 and \k<name> are, without parsing the source for them.
@@ -387,29 +400,24 @@ function canMatchEmpty(source: string): boolean {
   const named = groups.groups !== undefined;
   let i = 0;
 
-  const disjunction = (): boolean => {
-    let empty = alternative();
-    while (source[i] === "|") {
-      i++;
-      if (alternative()) empty = true;
-    }
-    return empty;
+  // For the innermost disjunction that is open, the whole source or a group's: whether an alternative that
+  // has ended can match empty text, and whether the one being read still can. A group that opens keeps the
+  // two for the disjunction around it, and whether it is a lookaround, until its ) is read.
+  let ended = false;
+  let current = true;
+  const open: { lookaround: boolean; ended: boolean; current: boolean }[] = [];
+
+  // Reads the quantifier after a part, if any, and records in current whether the part must match a
+  // character: it must if it does whenever it matches, and its quantifier does not let it repeat zero
+  // times. A { that does not open a quantifier is a character matched as itself.
+  const quantified = (partEmpty: boolean): void => {
+    const quantifier = /^(?:[*+?]|\{(\d+)(?:,\d*)?\})\??/.exec(source.slice(i));
+    i += quantifier?.[0].length ?? 0;
+    const least = quantifier === null || quantifier[0][0] === "+" ? 1 : quantifier[0][0] === "{" ? Number(quantifier[1]) : 0;
+    if (least > 0 && !partEmpty) current = false;
   };
 
-  const alternative = (): boolean => {
-    let empty = true;
-    while (i < source.length && source[i] !== "|" && source[i] !== ")") {
-      const atomEmpty = atom();
-      // How many times the part must match: once, or as its quantifier says. A { that does not open a
-      // quantifier is a character matched as itself.
-      const quantifier = /^(?:[*+?]|\{(\d+)(?:,\d*)?\})\??/.exec(source.slice(i));
-      i += quantifier?.[0].length ?? 0;
-      const least = quantifier === null || quantifier[0][0] === "+" ? 1 : quantifier[0][0] === "{" ? Number(quantifier[1]) : 0;
-      if (least > 0 && !atomEmpty) empty = false;
-    }
-    return empty;
-  };
-
+  // A part that is not a group: reads it and returns whether it can match empty text.
   const atom = (): boolean => {
     const c = source[i++];
     if (c === "^" || c === "$") return true;
@@ -419,13 +427,6 @@ function canMatchEmpty(source: string): boolean {
       while (i < source.length && source[i] !== "]") i += source[i] === "\\" ? 2 : 1;
       i++;
       return false;
-    }
-    if (c === "(") {
-      const head = /^\?(<?[=!]|<[^>]*>|[a-zA-Z]*(?:-[a-zA-Z]*)?:)/.exec(source.slice(i));
-      i += head?.[0].length ?? 0;
-      const inner = disjunction();
-      i++; // the closing )
-      return /^<?[=!]$/.test(head?.[1] ?? "") || inner;
     }
     return false; // ., or a character matched as itself, such as a ] or } that closes nothing
   };
@@ -456,7 +457,31 @@ function canMatchEmpty(source: string): boolean {
     return false;
   };
 
-  return disjunction();
+  for (;;) {
+    const c = source[i];
+    if (c === undefined || c === ")") {
+      // The innermost disjunction ends: the whole source's at its end, or a group's at its ).
+      const empty = ended || current;
+      const group = open.pop();
+      if (group === undefined) return empty;
+      i++;
+      ({ ended, current } = group);
+      quantified(group.lookaround || empty);
+    } else if (c === "|") {
+      i++;
+      if (current) ended = true;
+      current = true;
+    } else if (c === "(") {
+      i++;
+      const head = /^\?(<?[=!]|<[^>]*>|[a-zA-Z]*(?:-[a-zA-Z]*)?:)/.exec(source.slice(i));
+      i += head?.[0].length ?? 0;
+      open.push({ lookaround: /^<?[=!]$/.test(head?.[1] ?? ""), ended, current });
+      ended = false;
+      current = true;
+    } else {
+      quantified(atom());
+    }
+  }
 }
 
 function stripKey(obj: unknown, path: string): void {
@@ -686,8 +711,13 @@ function systemCallReason(err: SystemCallError): string {
   return `${err.code ?? err.message} on ${err.syscall}`;
 }
 
-// A contract, golden or skip sentinel that is a directory, a FIFO or a device, which the harness does not read.
-class NotAFileError extends Error {}
+// A contract, golden, skip sentinel or capture that is a directory, a FIFO or a device, which the harness
+// does not read or write.
+class NotAFileError extends Error {
+  constructor(stats: Stats) {
+    super(stats.isDirectory() ? "a directory" : stats.isFIFO() ? "a FIFO" : "a device or socket");
+  }
+}
 
 // The text of a contract, golden or skip sentinel, read only when it is a file: opening a FIFO waits for
 // a program to write to it, so a golden that was one held the run, and reading a directory fails with
@@ -696,10 +726,18 @@ class NotAFileError extends Error {}
 // it cannot look up (a symbolic link that dangles or loops) or a file it cannot open or read.
 function readTextFile(path: string): string {
   const stats = statSync(path);
-  if (!stats.isFile()) {
-    throw new NotAFileError(stats.isDirectory() ? "a directory" : stats.isFIFO() ? "a FIFO" : "a device or socket");
-  }
+  if (!stats.isFile()) throw new NotAFileError(stats);
   return readFileSync(path, "utf8");
+}
+
+// Writes a capture to a file, or to a path that names nothing yet. Opening a FIFO to write to it waits for
+// a program to read from it, so a capture path that was one held the run before any later leg or fixture
+// ran; its type is looked up first, as readTextFile does. Throws a NotAFileError for anything but a file,
+// and the system's error for a path it cannot look up or a file it cannot open or write.
+function writeTextFile(path: string, text: string): void {
+  const stats = statSync(path, { throwIfNoEntry: false });
+  if (stats !== undefined && !stats.isFile()) throw new NotAFileError(stats);
+  writeFileSync(path, text);
 }
 
 // Why a contract, golden or skip sentinel was not read: it is not a file, or the system would not open or read it.
@@ -715,7 +753,8 @@ function unreadFileReason(err: UnreadFileError): string {
 
 // Whether a path names an entry, a symbolic link that dangles or loops included: runFixture asks this of
 // a golden. existsSync follows the link and reads such a golden as missing, so it was reported missing
-// after its CLI had run instead of failing its leg as a golden that cannot be read does.
+// after its CLI had run instead of failing its leg as a golden that cannot be read does. A contract.yaml
+// that was such a link was reported missing by runFixture, and its fixture was left out of the run.
 function hasEntry(path: string): boolean {
   try {
     lstatSync(path);
@@ -773,14 +812,15 @@ export function runFixture(
   const contractPath = join(fixtureDir, "contract.yaml");
   const expectedDir = join(fixtureDir, "expected");
 
-  if (!existsSync(contractPath)) {
+  if (!hasEntry(contractPath)) {
     console.error(`[${fixtureName}] missing contract.yaml`);
     return 2;
   }
   // The parser throws on a syntax error, a second document, a repeated key and an alias to an anchor
   // that is not set. That fails this fixture, as a contract of the wrong type does, instead of
   // stopping the run before the remaining fixtures. The first line of the error names the place; the
-  // lines after it quote the file. A contract.yaml that is not a file or cannot be opened fails it too.
+  // lines after it quote the file. A contract.yaml that is not a file or cannot be opened (a symbolic
+  // link that dangles or loops included) fails it too.
   let contractText: string;
   try {
     contractText = readTextFile(contractPath);
@@ -840,8 +880,9 @@ export function runFixture(
   // golden that cannot be read fails that participant's leg below instead of the harness: one over a
   // size limit (a RangeError), one that is not valid JSON (a SyntaxError), one that is not a file (a
   // directory or a FIFO) and one the operating system would not open, such as a file without read
-  // permission or a symbolic link that dangles or loops. Each stopped the run before the remaining legs
-  // and fixtures ran, or, for a FIFO, did not let it finish.
+  // permission or a symbolic link that dangles or loops. Each of these but the link stopped the run
+  // before the remaining legs and fixtures ran, or, for a FIFO, did not let it finish; the link was
+  // reported as a missing golden after its CLI had run (see hasEntry).
   const goldens = new Map<CLI, unknown>();
   const unreadGoldens = new Map<CLI, UnreadGoldenError>();
   for (const cli of contract.participants) {
@@ -906,14 +947,20 @@ export function runFixture(
 
       const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
       const capture = stableStringify(parsedVal);
-      // A capture that cannot be written, such as one whose path is a directory, fails its leg instead of
-      // stopping the run; the catch below rethrows any error but a RangeError.
+      // A capture that cannot be written, such as one whose path is a directory or whose fixture's directory
+      // under actual/ is a file, fails its leg instead of stopping the run, and so does one whose path is a
+      // FIFO, which held the run; the catch below rethrows any error but a RangeError.
       try {
         mkdirSync(dirname(actualPath), { recursive: true });
-        writeFileSync(actualPath, capture);
+        writeTextFile(actualPath, capture);
       } catch (err) {
-        if (!isSystemCallError(err)) throw err;
-        console.error(`\n[FAIL] ${fixtureName} × ${cli}: the capture could not be written at ${actualPath} (${systemCallReason(err)})`);
+        if (err instanceof NotAFileError) {
+          console.error(`\n[FAIL] ${fixtureName} × ${cli}: the capture at ${actualPath} is ${err.message}, not a file`);
+        } else if (isSystemCallError(err)) {
+          console.error(`\n[FAIL] ${fixtureName} × ${cli}: the capture could not be written at ${actualPath} (${systemCallReason(err)})`);
+        } else {
+          throw err;
+        }
         failures++;
         continue;
       }
@@ -1068,6 +1115,14 @@ export function runFixtures(
   return failed;
 }
 
+// The fixtures `npm run parity` runs: each entry of fixturesDir that holds a contract.yaml, whatever that
+// is, so runFixture reports one it cannot read. existsSync follows a symbolic link, so a fixture whose
+// contract.yaml was a link that dangles or loops was left out of the run without a line, and the
+// summary counted one fixture fewer.
+export function fixtureNames(fixturesDir: string): string[] {
+  return readdirSync(fixturesDir).filter((name) => hasEntry(join(fixturesDir, name, "contract.yaml")));
+}
+
 function main() {
   console.log("opena2a-parity harness");
   console.log(`  fixtures dir: ${FIXTURES_DIR}`);
@@ -1082,10 +1137,7 @@ function main() {
     Object.entries(BIN_VARS).map(([cli, name]) => [cli, process.env[name] as string]),
   ) as Record<CLI, string>;
 
-  const fixtures = readdirSync(FIXTURES_DIR).filter((n) => {
-    const p = join(FIXTURES_DIR, n);
-    return existsSync(join(p, "contract.yaml"));
-  });
+  const fixtures = fixtureNames(FIXTURES_DIR);
 
   if (fixtures.length === 0) {
     console.error("no fixtures found");

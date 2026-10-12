@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { rulePattern, runFixture } from "../src/run-parity.ts";
 
 // In a replace_regex rule, {FIXTURE_INPUT_DIR} stands for the fixture's input directory, matched
-// literally, or for an empty string in a kind: package-name fixture, which has none. No test read
+// literally; a kind: package-name fixture has none, and fails on a rule that holds it. No test read
 // that substitution: with the placeholder misspelt in the harness, the suite still passed.
 
 // One fixture with hma as its only participant and one replace_regex rule, run on a stub CLI that
@@ -74,17 +74,21 @@ test("{FIXTURE_INPUT_DIR} in a directory fixture's rule matches the input direct
   assert.deepEqual(r.capture, golden);
 });
 
-test("{FIXTURE_INPUT_DIR} in a kind: package-name fixture's rule is an empty string", () => {
-  const golden = { score: 7, note: "<AB>" };
+test("{FIXTURE_INPUT_DIR} in a kind: package-name fixture's rule fails the fixture before its CLI runs", () => {
+  // The fixture has no input directory, and the placeholder stood for an empty string there: this rule
+  // matched "ab", and {FIXTURE_INPUT_DIR}.* with an empty replacement deleted every string value.
   const r = runWithRule({
     kind: "package-name",
     pattern: "a{FIXTURE_INPUT_DIR}b",
     replacement: "<AB>",
     print: '{ score: 7, note: "ab" }',
-    golden,
+    golden: { score: 7, note: "<AB>" },
   });
-  assert.equal(r.rc, 0, r.logged.join("\n"));
-  assert.deepEqual(r.capture, golden);
+  assert.equal(r.rc, 2, r.logged.join("\n"));
+  assert.deepEqual(r.logged, [
+    "[stub] contract.yaml normalize rule 1 (replace_regex) pattern holds {FIXTURE_INPUT_DIR}, but a kind: package-name fixture has no input directory for it to stand for",
+  ]);
+  assert.equal(r.capture, undefined, "the fixture ran its CLI");
 });
 
 test("every {FIXTURE_INPUT_DIR} in a pattern stands for the input directory, not only the first", () => {
