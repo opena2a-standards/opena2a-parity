@@ -42,7 +42,7 @@ fixtures/
   a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
   `findings[0].checkId`). A key that resolves in no participant's golden fails the fixture, since it
   would compare nothing. A `must_match` that lists no key compares nothing too, and fails the
-  fixture before any CLI runs
+  fixture before any CLI runs, as does an entry that is not a key string (`1`, `null`)
 - `may_differ` — list of `{ path, reason }` entries naming keys per-CLI variation is allowed on.
   The harness fails the fixture before running any CLI if an entry has no `reason`, or if its
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
