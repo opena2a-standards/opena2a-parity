@@ -63,6 +63,19 @@ function runStubs(mustMatch: string[], legs: Record<string, { golden: string; pr
 
 const j = (value: unknown) => JSON.stringify(value);
 
+// A fixture's contract and the committed golden of each participant, read from a fixtures/ root. A
+// participant with no golden file fails an assertion naming the fixture and the CLI, as the harness
+// does, instead of an ENOENT stack from the read.
+function committedGoldens(fixturesRoot: string, name: string): { contract: { participants: string[]; must_match: string[] }; legs: { cli: string; golden: unknown }[] } {
+  const contract = parseYaml(readFileSync(join(fixturesRoot, name, "contract.yaml"), "utf8")) as { participants: string[]; must_match: string[] };
+  const legs = contract.participants.map((cli) => {
+    const goldenPath = join(fixturesRoot, name, "expected", `${cli}.json`);
+    assert.ok(existsSync(goldenPath), `fixtures/${name}: participant ${cli} has no golden at expected/${cli}.json`);
+    return { cli, golden: JSON.parse(readFileSync(goldenPath, "utf8")) as unknown };
+  });
+  return { contract, legs };
+}
+
 test("crossCliDiffs names a must-match key on which two goldens hold different values", () => {
   const diffs = crossCliDiffs(["score", "grade"], [
     { cli: "hma", golden: { score: 93, grade: "A" }, actual: { score: 93, grade: "A" } },
@@ -304,16 +317,30 @@ test('README.md "Contract model" says a participant whose golden carries none of
   assert.match(section.replace(/\s+/g, " "), /A participant whose golden carries none of the `must_match` keys fails the fixture too/);
 });
 
+test("a participant with no committed golden fails an assertion naming the fixture and the CLI, not an ENOENT", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-committed-goldens-"));
+  try {
+    mkdirSync(join(dir, "stub", "expected"), { recursive: true });
+    writeFileSync(join(dir, "stub", "contract.yaml"), ["participants:", "  - opena2a", "  - hma", "must_match:", "  - score", ""].join("\n"));
+    writeFileSync(join(dir, "stub", "expected", "opena2a.json"), j({ score: 1 }));
+    assert.throws(() => committedGoldens(dir, "stub"), (err: unknown) => {
+      assert.ok(err instanceof assert.AssertionError, `expected an AssertionError, got ${String(err)}`);
+      assert.equal(err.message, "fixtures/stub: participant hma has no golden at expected/hma.json");
+      return true;
+    });
+    writeFileSync(join(dir, "stub", "expected", "hma.json"), j({ score: 1 }));
+    assert.deepEqual(committedGoldens(dir, "stub").legs, [{ cli: "opena2a", golden: { score: 1 } }, { cli: "hma", golden: { score: 1 } }]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("every committed participant golden carries at least one of its fixture's must-match keys", () => {
   const fixtures = readdirSync(join(repoRoot, "fixtures")).filter((name) => existsSync(join(repoRoot, "fixtures", name, "contract.yaml")));
   assert.ok(fixtures.length > 0, "expected at least one fixtures/*/contract.yaml");
   let goldens = 0;
   for (const name of fixtures) {
-    const contract = parseYaml(readFileSync(join(repoRoot, "fixtures", name, "contract.yaml"), "utf8")) as { participants: string[]; must_match: string[] };
-    const legs = contract.participants.map((cli) => ({
-      cli,
-      golden: JSON.parse(readFileSync(join(repoRoot, "fixtures", name, "expected", `${cli}.json`), "utf8")) as unknown,
-    }));
+    const { contract, legs } = committedGoldens(join(repoRoot, "fixtures"), name);
     goldens += legs.length;
     assert.deepEqual(goldensWithoutMustMatchKey(contract.must_match, legs), [], `fixtures/${name}: a participant's golden carries no must-match key`);
   }
@@ -325,11 +352,7 @@ test("the committed goldens of every fixture agree on each must-match key across
   assert.ok(fixtures.length > 0, "expected at least one fixtures/*/contract.yaml");
   let compared = 0;
   for (const name of fixtures) {
-    const contract = parseYaml(readFileSync(join(repoRoot, "fixtures", name, "contract.yaml"), "utf8")) as { participants: string[]; must_match: string[] };
-    const legs = contract.participants.map((cli) => ({
-      cli,
-      golden: JSON.parse(readFileSync(join(repoRoot, "fixtures", name, "expected", `${cli}.json`), "utf8")) as unknown,
-    }));
+    const { contract, legs } = committedGoldens(join(repoRoot, "fixtures"), name);
     if (legs.length > 1) compared++;
     assert.deepEqual(crossCliDiffs(contract.must_match, legs), [], `fixtures/${name}: goldens disagree on a must-match key`);
   }
