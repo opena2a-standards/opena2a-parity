@@ -4,7 +4,7 @@ import fs, { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, exists
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isTransientProbeFailure, probeWithRetry, runFixture, unexpectedErrorReport, type GoldenReader } from "../src/run-parity.ts";
+import { isTransientProbeFailure, probeWithRetry, runFixture, runFixtures, unexpectedErrorReport, type GoldenReader } from "../src/run-parity.ts";
 
 test("isTransientProbeFailure fires only on an operational error payload", () => {
   // the exact timeout shape ai-trust emits
@@ -586,6 +586,105 @@ test("runFixture does not call a RangeError that is not a stack overflow a nesti
     r.logged.join("\n"),
   );
   assert.ok(!r.logged.some((l) => l.includes("nested too deeply")), r.logged.join("\n"));
+});
+
+test("runFixture fails the leg, instead of throwing, on a participant that prints the JSON literal null", () => {
+  // null is valid JSON, so it is parsed and captured like any other payload. Writing the capture read
+  // the payload's keys, which threw a TypeError on null and stopped the harness.
+  const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, null, 0);
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  // one invocation: null carries no error, so it is a shape failure and never a retry candidate
+  assert.equal(r.invocations, 1);
+  assert.ok(
+    r.logged.some((l) => l.includes("[SHAPE] stub × hma: exit=0, 3 of 3 must-match key(s) ABSENT from the payload: name, found, ecosystem")),
+    r.logged.join("\n"),
+  );
+  assert.equal(r.capture, "null");
+  assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
+});
+
+test("runFixtures runs the fixtures after one whose participant prints the JSON literal null", () => {
+  // The run this was reported from stopped at its first fixture and printed no summary line.
+  const dir = mkdtempSync(join(tmpdir(), "parity-null-payload-"));
+  const bin = join(dir, "stub.mjs");
+  // Prints null for the package named null-payload, and the golden's document for any other.
+  writeFileSync(bin, `console.log(process.argv[2] === "null-payload" ? "null" : JSON.stringify({ score: 7 }));`);
+  for (const name of ["null-payload", "passing"]) {
+    const fixture = join(dir, "fixtures", name);
+    mkdirSync(join(fixture, "expected"), { recursive: true });
+    writeFileSync(join(fixture, "contract.yaml"), `
+description: ${name} stub
+kind: package-name
+package: ${name}
+exercises:
+  hma: "{BIN} {PACKAGE}"
+participants:
+  - hma
+must_match:
+  - score
+may_differ: []
+`);
+    writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify({ score: 7 }));
+    writeSkipSentinels(fixture);
+  }
+  const logged: string[] = [];
+  const origError = console.error;
+  const origLog = console.log;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    const failed = runFixtures(
+      ["null-payload", "passing"],
+      { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" },
+      { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") },
+    );
+    console.error = origError;
+    console.log = origLog;
+    assert.equal(failed, 1, logged.join("\n"));
+    assert.ok(logged.some((l) => l.includes("[SHAPE] null-payload × hma: exit=0, 1 of 1 must-match key(s) ABSENT from the payload: score")), logged.join("\n"));
+    assert.ok(logged.some((l) => l.startsWith("[OK]   passing × hma: 1 must-match fields equal")), logged.join("\n"));
+  } finally {
+    console.error = origError;
+    console.log = origLog;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runFixture fails the leg, instead of throwing, when opena2a prints null in a drift-demo run", () => {
+  // INTENTIONAL_DRIFT=1 appends to opena2a's platform before the capture is written, and read that
+  // key on the payload whatever the payload was.
+  const contract = `
+description: drift-demo stub
+kind: package-name
+package: ghost
+exercises:
+  hma: "{BIN}"
+  opena2a: "{BIN}"
+participants:
+  - hma
+  - opena2a
+must_match:
+  - name
+  - platform
+may_differ: []
+`;
+  const golden = { name: "ghost", platform: "npm" };
+  const prior = process.env.INTENTIONAL_DRIFT;
+  process.env.INTENTIONAL_DRIFT = "1";
+  let r: ReturnType<typeof runStubFixture>;
+  try {
+    r = runStubFixture(contract, golden, golden, 0, undefined, { golden, payload: null });
+  } finally {
+    if (prior === undefined) delete process.env.INTENTIONAL_DRIFT;
+    else process.env.INTENTIONAL_DRIFT = prior;
+  }
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(
+    r.logged.some((l) => l.includes("[SHAPE] stub × opena2a: exit=0, 2 of 2 must-match key(s) ABSENT from the payload: name, platform")),
+    r.logged.join("\n"),
+  );
+  // the drift is applied to opena2a alone, so the hma leg is compared as it is in any run
+  assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × hma: 2 must-match fields equal")), r.logged.join("\n"));
 });
 
 test("unexpectedErrorReport prints the actual error key-sorted whether or not the golden records an error", () => {

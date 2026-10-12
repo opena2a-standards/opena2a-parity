@@ -268,15 +268,19 @@ function normalize(parsed: unknown, rules: FixtureContract["normalize"], fixture
 function applyIntentionalDrift(obj: unknown, cli: CLI): unknown {
   if (process.env.INTENTIONAL_DRIFT !== "1") return obj;
   if (cli !== "opena2a") return obj;
-  const cloned = structuredClone(obj) as Record<string, unknown>;
-  if (typeof cloned.platform === "string") {
+  // A payload is any JSON value, the literal null included, and null has no key to read.
+  const cloned = structuredClone(obj) as Record<string, unknown> | null;
+  if (cloned !== null && typeof cloned.platform === "string") {
     cloned.platform = cloned.platform + "+drift-demo";
   }
   return cloned;
 }
 
+// The text a capture is written as. The replacer sorts the keys of each object it meets and passes
+// every other value through, so this reads no key of the payload itself: a participant that prints
+// null gets a capture and a verdict like any other, instead of a TypeError that stops the run.
 function stableStringify(obj: unknown): string {
-  return JSON.stringify(obj, Object.keys(obj as object).sort ? sortKeysReplacer() : null, 2);
+  return JSON.stringify(obj, sortKeysReplacer(), 2);
 }
 
 // The key-sorting encoding stableStringify writes captures with, unindented. A golden copied from a
