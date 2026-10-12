@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { mayDifferProblems, runFixture } from "../src/run-parity.ts";
+import { mayDifferProblems, runFixture, runFixtures } from "../src/run-parity.ts";
 
 // The comparison reads only must_match, so a may_differ entry is checked on load or not at all: an
 // entry without its reason, or a key listed under both lists (still compared), would pass silently.
@@ -104,6 +104,53 @@ console.log(JSON.stringify({ score: 7, findings: ["x"] }));
       "[stub] contract.yaml may_differ entry 2 (path: findings) has no reason; say why this key may differ between CLIs",
     ]);
     assert.equal(readFileSync(counter, "utf8"), "0");
+  } finally {
+    console.error = origError;
+    console.log = origLog;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runFixtures counts a fixture that fails on its contract once, as it counts a fixture with a failed leg", () => {
+  // runFixture returns 2 for a contract it cannot run; the run summary counted that return value, so
+  // one such fixture read as two fixture failures.
+  const dir = mkdtempSync(join(tmpdir(), "parity-count-"));
+  const bin = join(dir, "stub.mjs");
+  writeFileSync(bin, `console.log(JSON.stringify({ score: 7 }));`);
+  const addFixture = (name: string, mayDiffer: string, golden: unknown) => {
+    const fixture = join(dir, "fixtures", name);
+    mkdirSync(join(fixture, "expected"), { recursive: true });
+    writeFileSync(join(fixture, "contract.yaml"), [
+      `description: ${name} stub`,
+      "kind: package-name",
+      "package: ghost",
+      "exercises:",
+      '  hma: "{BIN}"',
+      "participants:",
+      "  - hma",
+      "must_match:",
+      "  - score",
+      mayDiffer,
+      "",
+    ].join("\n"));
+    writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify(golden));
+    for (const cli of ["opena2a", "ai-trust"]) writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+  };
+  addFixture("no-reason", "may_differ:\n  - path: grade", { score: 7 });
+  addFixture("drifted", "may_differ: []", { score: 8 });
+  addFixture("passing", "may_differ: []", { score: 7 });
+  const logged: string[] = [];
+  const origError = console.error;
+  const origLog = console.log;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    const bins = { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" };
+    const dirs = { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") };
+    assert.equal(runFixture("no-reason", bins, dirs), 2, logged.join("\n"));
+    assert.equal(runFixtures(["no-reason", "passing"], bins, dirs), 1, logged.join("\n"));
+    assert.equal(runFixtures(["no-reason", "drifted", "passing"], bins, dirs), 2, logged.join("\n"));
+    assert.equal(runFixtures(["passing"], bins, dirs), 0, logged.join("\n"));
   } finally {
     console.error = origError;
     console.log = origLog;

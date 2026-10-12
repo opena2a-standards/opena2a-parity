@@ -401,12 +401,19 @@ function comparisonFailureReport(label: string, err: RangeError): string {
   return `[FAIL] ${label}: the payload or its golden ${reason} (RangeError: ${err.message})`;
 }
 
+// How runFixture reads a participant's golden. A unit test passes its own, since the RangeError a golden
+// over the size limit throws cannot be produced with a committed fixture.
+export type GoldenReader = (goldenPath: string) => unknown;
+const readGoldenFile: GoldenReader = (goldenPath) => JSON.parse(readFileSync(goldenPath, "utf8"));
+
 // Exported, with the two roots overridable, so a unit test can drive one fixture end to end
 // against a stub CLI in a temporary directory instead of the repository's own fixtures/ and actual/.
+// Returns 0 for a fixture that passes, 1 for a failed leg and 2 for a contract the harness cannot run.
 export function runFixture(
   fixtureName: string,
   bins: Record<CLI, string>,
   dirs: { fixtures: string; actual: string } = { fixtures: FIXTURES_DIR, actual: ACTUAL_DIR },
+  readGolden: GoldenReader = readGoldenFile,
 ): number {
   const fixtureDir = join(dirs.fixtures, fixtureName);
   const inputDir = join(fixtureDir, "input");
@@ -447,7 +454,7 @@ export function runFixture(
     const goldenPath = join(expectedDir, `${cli}.json`);
     if (!existsSync(goldenPath)) continue;
     try {
-      goldens.set(cli, JSON.parse(readFileSync(goldenPath, "utf8")));
+      goldens.set(cli, readGolden(goldenPath));
     } catch (err) {
       if (!(err instanceof RangeError)) throw err;
       unreadGoldens.set(cli, err);
@@ -561,7 +568,12 @@ export function runFixture(
       failures += diffs.length;
     } else {
       const notCompared = unresolved.length > 0 ? `; not compared: ${unresolved.join(", ")} (in no golden)` : "";
-      console.log(`[OK]   ${fixtureName} × ${cli}: ${mustMatch.length} must-match fields equal apart from object key order${notCompared}`);
+      // A leg that compared no field has nothing to call equal, so it does not print [OK].
+      if (mustMatch.length === 0) {
+        console.log(`[NONE] ${fixtureName} × ${cli}: no must-match field compared${notCompared}`);
+      } else {
+        console.log(`[OK]   ${fixtureName} × ${cli}: ${mustMatch.length} must-match fields equal apart from object key order${notCompared}`);
+      }
     }
   }
 
@@ -574,7 +586,7 @@ export function runFixture(
       console.error(`\n[FAIL] ${fixtureName}: ${crossDiffs.length} must-match field(s) differ between CLIs`);
       for (const d of crossDiffs) console.error(d);
       console.error(`  A must-match field holds one value in every CLI whose golden carries it. Fix the CLI or the golden that is`);
-      console.error(`  wrong; if the CLIs differ on purpose, list the key under may_differ with the reason (README.md "Contract model").`);
+      console.error(`  wrong; if the CLIs differ on purpose, move the key from must_match to may_differ, with the reason (README.md "Contract model").`);
       failures += crossDiffs.length;
     } else if (failures === 0 && legs.length > 1) {
       console.log(`[OK]   ${fixtureName}: ${legs.map((leg) => leg.cli).join(", ")} agree on every must-match field their goldens carry`);
@@ -586,13 +598,19 @@ export function runFixture(
   }
 
   // A CLI that is not a participant needs a sentinel saying why it does not exercise the fixture.
-  // Without one, a fixture that leaves a CLI out by mistake would pass looking complete.
+  // Without one, a fixture that leaves a CLI out by mistake would pass looking complete. An empty
+  // sentinel says no more than a missing one, so it fails too, as a may_differ entry without its reason does.
   const allCLIs: CLI[] = ["hma", "opena2a", "ai-trust"];
   for (const cli of allCLIs) {
     if (contract.participants.includes(cli)) continue;
     const skipPath = join(expectedDir, `${cli}.skip`);
-    if (existsSync(skipPath)) {
-      console.log(`[SKIP] ${fixtureName} × ${cli}: ${readFileSync(skipPath, "utf8").trim()}`);
+    const skipReason = existsSync(skipPath) ? readFileSync(skipPath, "utf8").trim() : null;
+    if (skipReason) {
+      console.log(`[SKIP] ${fixtureName} × ${cli}: ${skipReason}`);
+    } else if (skipReason === "") {
+      console.error(`\n[FAIL] ${fixtureName} × ${cli}: the skip sentinel at ${skipPath} is empty`);
+      console.error(`  Write in expected/${cli}.skip why ${cli} does not exercise this fixture (README.md "Contract model").`);
+      failures++;
     } else {
       console.error(`\n[FAIL] ${fixtureName} × ${cli}: not a participant and has no skip sentinel at ${skipPath}`);
       console.error(`  List ${cli} under participants with a golden, or add expected/${cli}.skip saying why it does not exercise this fixture (README.md "Contract model").`);
@@ -601,6 +619,20 @@ export function runFixture(
   }
 
   return failures > 0 ? 1 : 0;
+}
+
+// Runs each fixture and returns how many failed. runFixture returns 2, not 1, for a contract it cannot
+// run, so its results are counted, not summed: the summary line counts fixtures.
+export function runFixtures(
+  fixtureNames: string[],
+  bins: Record<CLI, string>,
+  dirs: { fixtures: string; actual: string } = { fixtures: FIXTURES_DIR, actual: ACTUAL_DIR },
+): number {
+  let failed = 0;
+  for (const name of fixtureNames) {
+    if (runFixture(name, bins, dirs) !== 0) failed++;
+  }
+  return failed;
 }
 
 function main() {
@@ -627,14 +659,10 @@ function main() {
     process.exit(2);
   }
 
-  let totalFailures = 0;
-  for (const name of fixtures) {
-    const rc = runFixture(name, bins);
-    totalFailures += rc;
-  }
+  const failedFixtures = runFixtures(fixtures, bins);
 
-  console.log(`\n${fixtures.length} fixture(s) run, ${totalFailures} fixture failure(s)`);
-  process.exit(totalFailures === 0 ? 0 : 1);
+  console.log(`\n${fixtures.length} fixture(s) run, ${failedFixtures} fixture failure(s)`);
+  process.exit(failedFixtures === 0 ? 0 : 1);
 }
 
 // Run the gate only when executed directly (e.g. `npm run parity`). Importing

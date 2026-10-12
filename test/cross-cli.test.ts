@@ -98,6 +98,23 @@ test("crossCliDiffs leaves a CLI whose golden omits a key out of that key's comp
   assert.deepEqual(crossCliDiffs(["scanStatus"], [legs[0], legs[1]]), []);
 });
 
+test("crossCliDiffs leaves out a CLI whose golden omits a key even when that CLI's output carries the key", () => {
+  // ai-trust's output carrying scanStatus against its own golden's omission is a drift its own leg
+  // reports; between CLIs it is not a difference, whatever value it holds
+  const registered = { trustLevel: 3, verdict: "passed" };
+  const legs = [
+    { cli: "hma", golden: { ...registered, scanStatus: "warnings" }, actual: { ...registered, scanStatus: "warnings" } },
+    { cli: "ai-trust", golden: registered, actual: { ...registered, scanStatus: "pending" } },
+    { cli: "opena2a", golden: { ...registered, scanStatus: "warnings" }, actual: { ...registered, scanStatus: "warnings" } },
+  ];
+  assert.deepEqual(crossCliDiffs(["trustLevel", "verdict", "scanStatus"], legs), []);
+  // where the CLIs that carry the key do differ, the block names those two and not the omitting one
+  legs[2] = { cli: "opena2a", golden: { ...registered, scanStatus: "warnings" }, actual: { ...registered, scanStatus: "failed" } };
+  const diffs = crossCliDiffs(["trustLevel", "verdict", "scanStatus"], legs);
+  assert.deepEqual(diffs, ['  at scanStatus:\n    outputs:\n      hma:     "warnings"\n      opena2a: "failed"'], diffs.join("\n"));
+  assert.doesNotMatch(diffs[0], /ai-trust/);
+});
+
 test("crossCliDiffs compares by value: key order is not a difference, null is a value", () => {
   const legs = [
     { cli: "hma", golden: { scores: { a: 1, b: 2 }, level: null }, actual: { scores: { a: 1, b: 2 }, level: null } },
@@ -132,8 +149,20 @@ test("runFixture fails a fixture whose CLIs each match their own golden while th
   assert.ok(r.logged.some((l) => l.includes("[FAIL] stub: 1 must-match field(s) differ between CLIs")), r.logged.join("\n"));
   const block = r.logged.find((l) => l.startsWith("  at score:")) ?? "";
   assert.match(block, /goldens:\n {6}hma: {5}93\n {6}opena2a: 98/, r.logged.join("\n"));
-  // the report says what to do with a difference that is wanted, and where that is documented
-  assert.ok(r.logged.some((l) => l.includes("may_differ") && l.includes('README.md "Contract model"')), r.logged.join("\n"));
+  // the report says what to do with a difference that is wanted, and where that is documented: the key
+  // moves out of must_match, since a may_differ path also under must_match fails the contract check
+  assert.ok(
+    r.logged.some((l) => l.includes("move the key from must_match to may_differ, with the reason") && l.includes('README.md "Contract model"')),
+    r.logged.join("\n"),
+  );
+});
+
+test("README.md tells a reader whose CLIs differ on purpose to move the key from must_match, not only to list it under may_differ", () => {
+  const readme = readFileSync(join(repoRoot, "README.md"), "utf8").replace(/\s+/g, " ");
+  // a key listed under both fails the fixture before any CLI runs (mayDifferProblems)
+  assert.doesNotMatch(readme, /(?:list the key under|the key belongs under) `may_differ`/);
+  // the cross-CLI section and the re-baselining step both give the advice
+  assert.equal(readme.match(/move the key from `must_match` to `may_differ`, with the reason/g)?.length, 2, readme);
 });
 
 test("runFixture fails the registered-package trial: one golden at another trust level and verdict", () => {
