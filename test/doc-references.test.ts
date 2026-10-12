@@ -164,3 +164,37 @@ test("CVE, CWE, ISO, RFC and IEEE identifiers and common protocol, codec and cer
     "ticket-style identifier: TEAM-2024-17",
   ]);
 });
+
+// A red parity leg blocks a PR only in a CLI repository that lists `parity / parity` as a required
+// status check on `main`; anywhere else the PR shows a failing check and can still be merged. So a
+// README sentence that says the harness fails or blocks a PR must say where it blocks.
+export function unconditionalBlockClaims(text: string): string[] {
+  return text
+    .replace(/\s+/g, " ")
+    .split(/(?<=\.)\s+/)
+    .filter((sentence) => /\b(?:fails?|block(?:s|ed|ing)?)\b.*\bPRs?\b|\bPRs?\b.*\bblock/.test(sentence))
+    .filter((sentence) => !(sentence.includes("`parity / parity`") && /\brequire/.test(sentence)));
+}
+
+test("README.md says a parity failure blocks a PR only where `parity / parity` is a required check", () => {
+  assert.deepEqual(
+    unconditionalBlockClaims(readFileSync(join(repoRoot, "README.md"), "utf8")),
+    [],
+    "Say the PR gets a failing check, and that it is blocked only where `parity / parity` is required.",
+  );
+});
+
+test("a sentence that fails or blocks a PR unconditionally is reported; one that names the required check is not", () => {
+  assert.deepEqual(unconditionalBlockClaims("The harness fails the PR if output drifts. Open a PR; CI runs the harness."), [
+    "The harness fails the PR if output drifts.",
+  ]);
+  assert.deepEqual(unconditionalBlockClaims("Drift blocks the CLI PR."), ["Drift blocks the CLI PR."]);
+  assert.deepEqual(unconditionalBlockClaims("A PR is blocked on drift."), ["A PR is blocked on drift."]);
+  assert.deepEqual(
+    unconditionalBlockClaims(
+      "A repo that requires `parity / parity` blocks its CLI PR on a red leg. Re-run the PR's failed job. " +
+        "A unit test that fails on `main` turns the leg red.",
+    ),
+    [],
+  );
+});
