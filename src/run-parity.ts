@@ -332,11 +332,14 @@ export function absentMustMatchKeys(parsed: unknown, mustMatch: string[], golden
 
 // One line per participant, naming every absent key. Distinct from [FAIL] (value drift) on purpose:
 // a document of the wrong shape is not a drift of the right one, and it was never a retry candidate.
+// The remark about exit 0 is printed only for a leg that exited 0: on a non-zero exit it described
+// an exit code the same line had just reported otherwise.
 export function shapeFailureReport(label: string, exitCode: number, absent: string[], total: number, errorField?: unknown): string {
   const head = `[SHAPE] ${label}: exit=${exitCode}, ${absent.length} of ${total} must-match key(s) ABSENT from the payload: ${absent.join(", ")}`;
+  const exitZeroRemark = exitCode === 0 ? " (exit 0 is not evidence of the right work)" : "";
   const why = errorField
     ? `operational error payload after ${PROBE_RETRIES} attempts (error: ${String(errorField)})`
-    : "a well-formed document of a different shape (exit 0 is not evidence of the right work)";
+    : `a well-formed document of a different shape${exitZeroRemark}`;
   return `${head}\n  ${why}; not retried: the retry is ${RETRY_CONDITION}`;
 }
 

@@ -127,6 +127,29 @@ console.log(JSON.stringify({ type: "npm-package", name: "@scope/pkg", score: 71 
   }
 });
 
+test("the shape report makes its remark about exit 0 only for a leg that exited 0", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-shape-exit-"));
+  const bin = join(dir, "nonzero.mjs");
+  // The same scan document as above, from a CLI that exits 1.
+  writeFileSync(bin, `console.log(JSON.stringify({ type: "npm-package", name: "@scope/pkg", score: 71 })); process.exitCode = 1;`);
+  try {
+    const r = probeWithRetry(`node ${bin} check --no-scan --json`, "@scope/pkg", "test shape exit");
+    assert.equal(r.exitCode, 1);
+    assert.equal(r.parseOk, true);
+    const absent = absentMustMatchKeys(r.parsed, MUST_MATCH);
+    const report = shapeFailureReport("check-registered-ai hma", r.exitCode, absent, MUST_MATCH.length);
+    assert.match(report, /exit=1/);
+    assert.doesNotMatch(report, /exit 0/);
+    // the rest of the sentence is unchanged, and still joined to the retry clause
+    assert.match(report, /\n  a well-formed document of a different shape; not retried: /);
+    // a leg that did exit 0 keeps the remark
+    const zero = shapeFailureReport("check-registered-ai hma", 0, absent, MUST_MATCH.length);
+    assert.match(zero, /\n  a well-formed document of a different shape \(exit 0 is not evidence of the right work\); not retried: /);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the retry's own log line says which condition it is keyed on", () => {
   // The next reader must not assume the retry covers shape. The condition is a constant so the
   // log line and this assertion cannot drift apart.
