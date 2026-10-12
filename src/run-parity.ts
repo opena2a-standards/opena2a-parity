@@ -310,6 +310,33 @@ export function unexpectedErrorReport(label: string, exitCode: number, actual: u
   ].join("\n");
 }
 
+// The must-match keys on which two CLIs hold different values, one block per key. Each leg compares a
+// CLI with its own golden only, so the legs alone pass a fixture whose goldens record different values
+// for the same input, and re-baselining copies one CLI's capture over that CLI's golden without looking
+// at the others. Here the goldens are compared with each other, and so are the outputs.
+//
+// A CLI whose golden omits a key is left out of that key's comparison: the omission is that CLI's
+// recorded absence (ai-trust's `scanStatus` on check-registered-ai), and its own leg holds its output
+// to it. A leg that failed before its own comparison has no `actual` and takes part with its golden.
+export function crossCliDiffs(mustMatch: string[], legs: { cli: string; golden: unknown; actual?: unknown }[]): string[] {
+  const diffs: string[] = [];
+  for (const key of mustMatch) {
+    const carriers = legs.filter((leg) => getPath(leg.golden, key) !== undefined);
+    if (carriers.length < 2) continue;
+    const width = Math.max(...carriers.map((leg) => leg.cli.length)) + 1;
+    const sides: string[] = [];
+    for (const [title, side] of [["goldens", "golden"], ["outputs", "actual"]] as const) {
+      const held = carriers
+        .filter((leg) => getPath(leg[side], key) !== undefined)
+        .map((leg) => ({ cli: leg.cli, value: canonicalJson(getPath(leg[side], key)) }));
+      if (new Set(held.map((h) => h.value)).size < 2) continue;
+      sides.push(`    ${title}:`, ...held.map((h) => `      ${`${h.cli}:`.padEnd(width)} ${h.value}`));
+    }
+    if (sides.length > 0) diffs.push([`  at ${key}:`, ...sides].join("\n"));
+  }
+  return diffs;
+}
+
 // JSON.parse accepts a document nested deeper than the call stack allows, but the clone, the key sort
 // and the comparison recurse and throw a RangeError on it. That fails its own leg instead of stopping
 // the harness before the remaining legs and fixtures run. A RangeError from anything else, such as a
@@ -414,6 +441,7 @@ export function runFixture(
     }
   }
 
+  const legs: { cli: CLI; golden: unknown; actual?: unknown }[] = [];
   for (const cli of contract.participants) {
     const goldenPath = join(expectedDir, `${cli}.json`);
     if (!existsSync(goldenPath)) {
@@ -423,7 +451,10 @@ export function runFixture(
     }
     const golden = JSON.parse(readFileSync(goldenPath, "utf8"));
     const actual = results[cli]?.parsed;
-    if (actual === undefined) continue;
+    if (actual === undefined) {
+      legs.push({ cli, golden });
+      continue;
+    }
 
     const diffs: string[] = [];
     try {
@@ -437,6 +468,7 @@ export function runFixture(
       failures++;
       continue;
     }
+    legs.push({ cli, golden, actual });
     if (diffs.length > 0) {
       console.error(`\n[FAIL] ${fixtureName} × ${cli}: ${diffs.length} must-match field(s) drifted`);
       for (const d of diffs) console.error(d);
@@ -446,6 +478,26 @@ export function runFixture(
     } else {
       console.log(`[OK]   ${fixtureName} × ${cli}: ${contract.must_match.length} must-match fields equal apart from object key order`);
     }
+  }
+
+  // Every leg above compared a CLI with its own golden; this compares the CLIs with each other. The
+  // line that says they agree is printed only when every leg passed, so it never covers an output
+  // that was not compared.
+  try {
+    const crossDiffs = crossCliDiffs(contract.must_match, legs);
+    if (crossDiffs.length > 0) {
+      console.error(`\n[FAIL] ${fixtureName}: ${crossDiffs.length} must-match field(s) differ between CLIs`);
+      for (const d of crossDiffs) console.error(d);
+      console.error(`  A must-match field holds one value in every CLI whose golden carries it. Fix the CLI or the golden that is`);
+      console.error(`  wrong; if the CLIs differ on purpose, list the key under may_differ with the reason (README.md "Contract model").`);
+      failures += crossDiffs.length;
+    } else if (failures === 0 && legs.length > 1) {
+      console.log(`[OK]   ${fixtureName}: ${legs.map((leg) => leg.cli).join(", ")} agree on every must-match field their goldens carry`);
+    }
+  } catch (err) {
+    if (!(err instanceof RangeError)) throw err;
+    console.error(`\n${comparisonFailureReport(`${fixtureName} across CLIs`, err)}`);
+    failures++;
   }
 
   const allCLIs: CLI[] = ["hma", "opena2a", "ai-trust"];
