@@ -38,7 +38,10 @@ fixtures/
 
 - `exercises` — which CLI commands the fixture runs
 - `participants` — list of CLIs for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture
-- `must_match` — list of JSONPath-ish keys equal across participating CLIs apart from object key order
+- `must_match` — list of keys equal across participating CLIs apart from object key order. A key is
+  a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
+  `findings[0].checkId`). A key that resolves in no participant's golden fails the fixture, since it
+  would compare nothing
 - `may_differ` — list of `{ path, reason }` entries naming keys per-CLI variation is allowed on.
   The harness fails the fixture before running any CLI if an entry has no `reason`, or if its
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)

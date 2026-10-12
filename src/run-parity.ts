@@ -314,6 +314,25 @@ export function shapeFailureReport(label: string, exitCode: number, absent: stri
   return `${head}\n  ${why}; not retried: the retry is ${RETRY_CONDITION}`;
 }
 
+// The contract keys no participant's golden carries. A key in another syntax (`findings[0].checkId`)
+// or a misspelt one resolves to nothing in the golden and the payload alike, the shape check reads
+// that as absence on both sides, and nothing equals nothing, so it was counted equal without being
+// compared. One golden carrying the key is enough: check-registered-ai's scanStatus is in the hma and
+// opena2a goldens and omitted from ai-trust's on purpose. With no golden yet there is nothing to
+// resolve a key against, and each missing golden is reported on its own.
+export function unresolvedMustMatchKeys(mustMatch: string[], goldens: unknown[]): string[] {
+  if (goldens.length === 0) return [];
+  return mustMatch.filter((key) => goldens.every((golden) => getPath(golden, key) === undefined));
+}
+
+export function unresolvedKeysReport(fixtureName: string, unresolved: string[]): string {
+  return [
+    `[CONTRACT] ${fixtureName}: ${unresolved.length} must-match key(s) resolve in no participant's golden: ${unresolved.join(", ")}`,
+    `  A key is a dot-separated path with a numeric segment for an array index (findings.0.checkId).`,
+    `  A key no golden carries compares nothing, so it fails the fixture instead of counting as equal.`,
+  ].join("\n");
+}
+
 function diffKey(actual: unknown, golden: unknown, path: string): string | null {
   const a = getPath(actual, path);
   const g = getPath(golden, path);
@@ -417,6 +436,30 @@ export function runFixture(
   const results: Record<string, ProbeResult> = {};
   let failures = 0;
 
+  // Each participant's golden, read once: the probe, the shape check and the comparison all use it. A
+  // RangeError reading one (a size limit) fails that participant's leg below instead of the harness.
+  const goldens = new Map<CLI, unknown>();
+  const unreadGoldens = new Map<CLI, RangeError>();
+  for (const cli of contract.participants) {
+    const goldenPath = join(expectedDir, `${cli}.json`);
+    if (!existsSync(goldenPath)) continue;
+    try {
+      goldens.set(cli, JSON.parse(readFileSync(goldenPath, "utf8")));
+    } catch (err) {
+      if (!(err instanceof RangeError)) throw err;
+      unreadGoldens.set(cli, err);
+    }
+  }
+
+  // The legs still run, so each capture is written, and compare only the keys a golden carries. A
+  // golden that could not be read may carry a key, so its fixture is not checked for them.
+  const unresolved = unreadGoldens.size > 0 ? [] : unresolvedMustMatchKeys(contract.must_match, [...goldens.values()]);
+  if (unresolved.length > 0) {
+    console.error(`\n${unresolvedKeysReport(fixtureName, unresolved)}`);
+    failures += unresolved.length;
+  }
+  const mustMatch = contract.must_match.filter((key) => !unresolved.includes(key));
+
   for (const cli of contract.participants) {
     const invocation = contract.exercises[cli];
     if (!invocation) {
@@ -436,8 +479,9 @@ export function runFixture(
     try {
       // The golden decides which error payloads are expected and which absences are shape failures;
       // a missing golden is reported below.
-      const shapeGoldenPath = join(expectedDir, `${cli}.json`);
-      const shapeGolden = existsSync(shapeGoldenPath) ? JSON.parse(readFileSync(shapeGoldenPath, "utf8")) : undefined;
+      const unreadGolden = unreadGoldens.get(cli);
+      if (unreadGolden) throw unreadGolden;
+      const shapeGolden = goldens.get(cli);
       // Normalized inside the probe, so the expected-error decision sees what the golden was copied from.
       const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], kind === "directory" ? inputDir : "");
       const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden, fixtureNormalize);
@@ -451,10 +495,10 @@ export function runFixture(
       const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
       writeFileSync(actualPath, stableStringify(parsedVal));
 
-      const absent = absentMustMatchKeys(parsedVal, contract.must_match, shapeGolden);
+      const absent = absentMustMatchKeys(parsedVal, mustMatch, shapeGolden);
       if (absent.length > 0) {
         const errorField = isTransientProbeFailure(parsedVal, shapeGolden) ? (parsedVal as { error?: unknown }).error : undefined;
-        console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, contract.must_match.length, errorField)}`);
+        console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, mustMatch.length, errorField)}`);
         console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
         failures += absent.length;
         continue; // no golden comparison for a document of the wrong shape; the keys are named above
@@ -485,7 +529,8 @@ export function runFixture(
       failures++;
       continue;
     }
-    const golden = JSON.parse(readFileSync(goldenPath, "utf8"));
+    if (unreadGoldens.has(cli)) continue; // its leg has already failed on it
+    const golden = goldens.get(cli);
     const actual = results[cli]?.parsed;
     if (actual === undefined) {
       legs.push({ cli, golden });
@@ -494,7 +539,7 @@ export function runFixture(
 
     const diffs: string[] = [];
     try {
-      for (const key of contract.must_match) {
+      for (const key of mustMatch) {
         const d = diffKey(actual, golden, key);
         if (d) diffs.push(d);
       }
@@ -512,7 +557,8 @@ export function runFixture(
       console.error(`  Intended output change? Re-baseline golden-first: README.md "Re-baselining goldens".`);
       failures += diffs.length;
     } else {
-      console.log(`[OK]   ${fixtureName} × ${cli}: ${contract.must_match.length} must-match fields equal apart from object key order`);
+      const notCompared = unresolved.length > 0 ? `; not compared: ${unresolved.join(", ")} (in no golden)` : "";
+      console.log(`[OK]   ${fixtureName} × ${cli}: ${mustMatch.length} must-match fields equal apart from object key order${notCompared}`);
     }
   }
 

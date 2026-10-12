@@ -217,12 +217,15 @@ process.exit(1);
 // counts its invocations and always prints `payload` with `exit`. Returns the fixture's result, the
 // invocation count, every line the harness printed and the capture it wrote (undefined if none).
 // `encode` turns the golden and the payload into JSON text; `String` hands over text as it is.
+// `peer`, for a contract that also lists opena2a, is that participant's golden and the payload its
+// stub prints with exit 0.
 function runStubFixture(
   contract: string,
   golden: unknown,
   payload: unknown,
   exit = 1,
   encode: (value: unknown) => string = (value) => JSON.stringify(value),
+  peer?: { golden: unknown; payload: unknown },
 ): { rc: number; invocations: number; logged: string[]; capture: string | undefined } {
   const dir = mkdtempSync(join(tmpdir(), "parity-stub-fixture-"));
   const fixture = join(dir, "fixtures", "stub");
@@ -230,6 +233,11 @@ function runStubFixture(
   writeFileSync(join(fixture, "contract.yaml"), contract);
   writeFileSync(join(fixture, "expected", "hma.json"), encode(golden));
   writeSkipSentinels(fixture);
+  const peerBin = join(dir, "peer.mjs");
+  if (peer) {
+    writeFileSync(join(fixture, "expected", "opena2a.json"), encode(peer.golden));
+    writeFileSync(peerBin, `console.log(${JSON.stringify(encode(peer.payload))});`);
+  }
   const counter = join(dir, "n");
   const bin = join(dir, "stub.mjs");
   writeFileSync(counter, "0");
@@ -247,7 +255,7 @@ process.exitCode = ${exit};
   console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   try {
-    const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
+    const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: peer ? `node ${peerBin}` : "unused", "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
     const capturePath = join(dir, "actual", "stub", "hma.json");
     const capture = existsSync(capturePath) ? readFileSync(capturePath, "utf8") : undefined;
     return { rc, invocations: Number(readFileSync(counter, "utf8")), logged, capture };
@@ -571,15 +579,18 @@ test("runFixture decides whether an error is expected on the normalized payload 
 });
 
 test("runFixture hands the golden to the shape check, so a must-match key the golden also omits is not a SHAPE failure", () => {
-  // check-registered-ai's ai-trust leg: scanStatus is a must-match key its golden omits on purpose
+  // check-registered-ai: scanStatus is a must-match key ai-trust's golden omits on purpose and the
+  // opena2a golden carries. The stub's hma leg plays ai-trust's part.
   const contract = `
 description: registered stub
 kind: package-name
 package: "@scope/server"
 exercises:
   hma: "{BIN} check {PACKAGE} --no-scan --json"
+  opena2a: "{BIN} check {PACKAGE} --format json"
 participants:
   - hma
+  - opena2a
 must_match:
   - trustLevel
   - name
@@ -589,9 +600,54 @@ must_match:
 may_differ: []
 `;
   const golden = { name: "@scope/server", found: true, trustLevel: 3, verdict: "passed", packageType: "mcp_server" };
-  const r = runStubFixture(contract, golden, { ...golden, source: "registry" }, 0);
+  const peerGolden = { ...golden, scanStatus: "warnings" };
+  const r = runStubFixture(contract, golden, { ...golden, source: "registry" }, 0, undefined, { golden: peerGolden, payload: peerGolden });
   assert.equal(r.invocations, 1);
-  assert.ok(!r.logged.some((l) => l.includes("[SHAPE]")), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.includes("[SHAPE]") || l.includes("[CONTRACT]")), r.logged.join("\n"));
   assert.equal(r.rc, 0);
   assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × hma: 5 must-match fields")), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × opena2a: 5 must-match fields")), r.logged.join("\n"));
+});
+
+// The contract from the issue: one key in JSONPath bracket form, one misspelt. Each resolves to
+// nothing in the golden and the payload alike, so both were counted equal and the leg passed.
+const UNRESOLVED_KEY_GOLDEN = { score: 98, findings: [{ checkId: "GIT-001" }] };
+const UNRESOLVED_KEY_PAYLOAD = { score: 12, findings: [{ checkId: "CRED-001" }] };
+const contractWithKeys = (keys: string[]) => `
+description: must-match key syntax stub
+kind: package-name
+package: x
+exercises:
+  hma: "{BIN}"
+participants:
+  - hma
+must_match: ${JSON.stringify(keys)}
+may_differ: []
+`;
+
+test("runFixture fails a fixture whose must-match key resolves in no participant's golden, instead of counting it equal", () => {
+  const r = runStubFixture(contractWithKeys(["findings[0].checkId", "scroe"]), UNRESOLVED_KEY_GOLDEN, UNRESOLVED_KEY_PAYLOAD, 0);
+  assert.equal(r.rc, 1);
+  assert.ok(
+    r.logged.some((l) => l.includes("[CONTRACT] stub: 2 must-match key(s) resolve in no participant's golden: findings[0].checkId, scroe")),
+    r.logged.join("\n"),
+  );
+  assert.ok(r.logged.some((l) => l.includes("findings.0.checkId")), "the report names the key syntax that resolves");
+  // neither key is counted among the fields that compared equal, and the leg's line says so
+  assert.ok(!r.logged.some((l) => /[12] must-match fields equal/.test(l)), r.logged.join("\n"));
+  assert.ok(
+    r.logged.some((l) => l.startsWith("[OK]   stub × hma: 0 must-match fields") && l.endsWith("not compared: findings[0].checkId, scroe (in no golden)")),
+    r.logged.join("\n"),
+  );
+  // the leg still runs, so the capture a re-baseline reads is written
+  assert.equal(r.invocations, 1);
+  assert.ok(r.capture !== undefined);
+});
+
+test("runFixture compares a must-match key that indexes an array with a numeric segment", () => {
+  const r = runStubFixture(contractWithKeys(["findings.0.checkId"]), UNRESOLVED_KEY_GOLDEN, UNRESOLVED_KEY_PAYLOAD, 0);
+  assert.equal(r.rc, 1);
+  assert.ok(!r.logged.some((l) => l.includes("[CONTRACT]")), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma: 1 must-match field(s) drifted")), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes('expected: "GIT-001"') && l.includes('actual:   "CRED-001"')), r.logged.join("\n"));
 });
