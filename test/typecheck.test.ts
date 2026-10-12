@@ -96,8 +96,10 @@ function compilerEntry(): string {
   return resolve(dirname(manifestPath), bin.tsc);
 }
 
-function compile(extraArgs: string[] = []): { status: number | null; stdout: string; stderr: string } {
-  const r = spawnSync(process.execPath, [compilerEntry(), ...scriptArgs(), ...extraArgs], { cwd: repoRoot, encoding: "utf8" });
+// Runs the compiler with the arguments of the `typecheck` script, or of `script` when a test passes
+// one in, followed by `extraArgs`.
+function compile(extraArgs: string[] = [], script?: string): { status: number | null; stdout: string; stderr: string } {
+  const r = spawnSync(process.execPath, [compilerEntry(), ...scriptArgs(script), ...extraArgs], { cwd: repoRoot, encoding: "utf8" });
   return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
@@ -160,6 +162,15 @@ test("a quoted argument of the typecheck script reaches the compiler without its
   assert.deepEqual(scriptArgs("tsc --project my\\ config.json"), ["--project", "my config.json"]);
   assert.deepEqual(scriptArgs('"tsc" --project tsconfig.json'), ["--project", "tsconfig.json"]);
   assert.throws(() => scriptArgs(""), /must keep a `typecheck` script that runs tsc/);
+});
+
+test("the compiler runs with the arguments of the script it is given, a quoted one without its quotes", { skip }, () => {
+  // The two compiler runs above pass with the committed script split on spaces. This script names
+  // the same tsconfig.json in quotes, a path the compiler finds only without them, and asks for the
+  // file list, which a run of the committed script does not print.
+  const r = compile([], 'tsc --project "tsconfig.json" --listFilesOnly');
+  assert.equal(r.status, 0, `the compiler reports:\n${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /run-parity\.ts/, "the compiler ran without the --listFilesOnly of the script passed in");
 });
 
 test("the type check runs locally and in this repository, and skips for a consumer", () => {
