@@ -306,6 +306,8 @@ function ruleFieldProblems(name: string, field: string, value: unknown, emptyAll
 // with an empty string is *) passed this check and threw when the first output was normalized. One
 // that is empty with that value ({FIXTURE_INPUT_DIR} alone with an empty string) passed as a pattern
 // that is not empty, and matched at every position of every string: "ab" became "<IN>a<IN>b<IN>".
+// So did one that is not empty with that value and matches the empty string ((?:{FIXTURE_INPUT_DIR})
+// with an empty string is (?:)), so a pattern that holds the placeholder is also run on an empty string.
 export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, fixtureInputDir: string): string[] {
   const rules: unknown = contract.normalize ?? [];
   if (!Array.isArray(rules)) return ["normalize is not a list of rules"];
@@ -322,18 +324,26 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, 
     } else if (kind === "replace_regex") {
       const patternProblems = ruleFieldProblems(`${name} (replace_regex)`, "pattern", pattern);
       if (patternProblems.length === 0) {
-        // Both lines say what the placeholder became: a pattern that is empty here is not written
-        // empty, and the error quotes the pattern as compiled.
-        const standingFor = (pattern as string).includes(INPUT_DIR_PLACEHOLDER)
+        // Each line says what the placeholder became: a pattern that is empty here is not written
+        // empty, and the other two quote the pattern as compiled.
+        const holdsPlaceholder = (pattern as string).includes(INPUT_DIR_PLACEHOLDER);
+        const standingFor = holdsPlaceholder
           ? ` with ${INPUT_DIR_PLACEHOLDER} standing for ${fixtureInputDir === "" ? "an empty string" : "the input directory"}`
           : "";
         if ((pattern as string).replaceAll(INPUT_DIR_PLACEHOLDER, () => fixtureInputDir) === "") {
           patternProblems.push(`${name} (replace_regex) pattern is empty${standingFor}, so it would match at every position of every string`);
         } else {
+          let compiled: RegExp | undefined;
           try {
-            rulePattern(pattern as string, fixtureInputDir);
+            compiled = rulePattern(pattern as string, fixtureInputDir);
           } catch (err) {
             patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
+          }
+          // A pattern written without the placeholder is left as its author wrote it: ^$ replaces a value that is an empty string.
+          if (compiled && holdsPlaceholder && compiled.test("")) {
+            patternProblems.push(
+              `${name} (replace_regex) pattern matches the empty string${standingFor}: ${compiled} would insert the replacement where it matched no text`,
+            );
           }
         }
       }

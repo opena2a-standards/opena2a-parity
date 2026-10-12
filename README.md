@@ -65,7 +65,9 @@ list or mapping, a `participants` entry that names no CLI, and a `normalize` rul
 `path` or a `pattern` that is empty or not a regular expression with what the fixture puts in
 place of `{FIXTURE_INPUT_DIR}`: in a `kind: package-name` fixture `{FIXTURE_INPUT_DIR}*` is `*`,
 which is not one, and `{FIXTURE_INPUT_DIR}` alone is empty, which would match at every position
-of every string.
+of every string. So does a `pattern` that holds `{FIXTURE_INPUT_DIR}` and matches the empty string
+with that value: there `(?:{FIXTURE_INPUT_DIR})` is `(?:)`, which is not empty and matches at every
+position of every string too, and `({FIXTURE_INPUT_DIR})?` matches the empty string in any fixture.
 
 A golden that is not valid JSON, or that cannot be read (a directory, or a file without read
 permission), fails its participant's leg without running that CLI, and the run goes on to the

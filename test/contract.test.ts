@@ -13,6 +13,7 @@ import {
   mustMatchProblems,
   normalizeProblems,
   participantsProblems,
+  rulePattern,
   runFixture,
   runFixtures,
 } from "../src/run-parity.ts";
@@ -431,6 +432,11 @@ test('README.md "Contract model" describes the load checks as the harness applie
   const section = (readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "").replace(/\s+/g, " ");
   assert.match(section, /every `\{FIXTURE_INPUT_DIR\}` stands for the fixture's input directory, matched literally/);
   assert.match(section, /A `contract\.yaml` that is not one valid YAML document .* fails the fixture before any CLI runs/);
+  // The section named an empty pattern only; one that is not empty and matches the empty string fails on load too.
+  assert.match(
+    section,
+    /So does a `pattern` that holds `\{FIXTURE_INPUT_DIR\}` and matches the empty string with that value: there `\(\?:\{FIXTURE_INPUT_DIR\}\)` is `\(\?:\)`, which is not empty and matches at every position of every string too/,
+  );
   // The section said a package that is not a string fails any fixture; a directory fixture with one runs.
   assert.match(
     section,
@@ -637,6 +643,34 @@ test("normalizeProblems names a pattern that is empty with what the fixture puts
   assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}"), "$`"), []);
 });
 
+test("normalizeProblems names a pattern that matches the empty string with what the fixture puts in place of {FIXTURE_INPUT_DIR}", () => {
+  // In a kind: package-name fixture (?:{FIXTURE_INPUT_DIR}) is (?:), which is not empty, so it passed the
+  // check for an empty pattern and still matched at every position of every string: "ab" became "<IN>a<IN>b<IN>".
+  const rule = (pattern: string) => parseYaml(`normalize: [{ kind: replace_regex, pattern: ${JSON.stringify(pattern)}, replacement: "<IN>" }]`);
+  const head = "normalize rule 1 (replace_regex) pattern matches the empty string with {FIXTURE_INPUT_DIR} standing for";
+  const tail = "would insert the replacement where it matched no text";
+  assert.equal("ab".replace(rulePattern("(?:{FIXTURE_INPUT_DIR})", ""), "<IN>"), "<IN>a<IN>b<IN>");
+  for (const [pattern, compiled] of [
+    ["(?:{FIXTURE_INPUT_DIR})", "/(?:)/g"],
+    ["({FIXTURE_INPUT_DIR})+", "/()+/g"],
+    ["{FIXTURE_INPUT_DIR}|x", "/|x/g"],
+    ["^{FIXTURE_INPUT_DIR}$", "/^$/g"],
+  ]) {
+    assert.deepEqual(normalizeProblems(rule(pattern), ""), [`${head} an empty string: ${compiled} ${tail}`], pattern);
+    assert.deepEqual(normalizeProblems(rule(pattern), "/fixtures/stub/input"), [], pattern);
+  }
+  // an input directory that is optional matches the empty string in a directory fixture too
+  assert.equal("ab".replace(rulePattern("({FIXTURE_INPUT_DIR})?", "/fixtures/stub/input"), "<IN>"), "<IN>a<IN>b<IN>");
+  assert.deepEqual(normalizeProblems(rule("({FIXTURE_INPUT_DIR})?"), "/fixtures/stub/input"), [
+    `${head} the input directory: /(\\/fixtures\\/stub\\/input)?/g ${tail}`,
+  ]);
+  // a pattern that still matches only text with the placeholder empty passes
+  assert.deepEqual(normalizeProblems(rule("a{FIXTURE_INPUT_DIR}b"), ""), []);
+  assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}/?SOUL\\.md"), ""), []);
+  // a pattern written without the placeholder is what its author wrote: ^$ replaces a value that is an empty string
+  assert.deepEqual(normalizeProblems(rule("^$"), ""), []);
+});
+
 // The contract of a passing kind: package-name stub fixture, with any of its fields replaced.
 function stubContract(fields: Partial<Record<"kind" | "exercises" | "participants" | "mustMatch" | "normalize", string>> = {}): string {
   return [
@@ -703,7 +737,7 @@ console.log(JSON.stringify({ score: 7, args: process.argv.slice(2) }));
 // Each contract below stopped the run with an error thrown out of runFixture, so no later fixture ran,
 // or passed its fixture, as its entry comment says: with nothing run or compared (a participants list
 // that names no CLI), or with hma run and `score` compared and found equal (`kind: dir`,
-// `participants: [hma, hma]` and a pattern of {FIXTURE_INPUT_DIR} alone). `problem` is the line the load
+// `participants: [hma, hma]` and a pattern of {FIXTURE_INPUT_DIR} alone or in a group). `problem` is the line the load
 // check prints for it after `[<fixture>] contract.yaml `, or a pattern where the line holds a temporary path.
 const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; problem: string | RegExp }[] = [
   {
@@ -742,6 +776,14 @@ const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; pro
     contract: stubContract({ normalize: 'normalize: [{ kind: replace_regex, pattern: "{FIXTURE_INPUT_DIR}", replacement: "<IN>" }]' }),
     problem:
       "normalize rule 1 (replace_regex) pattern is empty with {FIXTURE_INPUT_DIR} standing for an empty string, so it would match at every position of every string",
+  },
+  {
+    // ran hma with (?:), which is not empty and matches at every position of every string, and returned 0
+    title: "a pattern that matches the empty string with the empty string a kind: package-name fixture puts in place of {FIXTURE_INPUT_DIR}",
+    name: "group-of-no-dir",
+    contract: stubContract({ normalize: 'normalize: [{ kind: replace_regex, pattern: "(?:{FIXTURE_INPUT_DIR})", replacement: "<IN>" }]' }),
+    problem:
+      "normalize rule 1 (replace_regex) pattern matches the empty string with {FIXTURE_INPUT_DIR} standing for an empty string: /(?:)/g would insert the replacement where it matched no text",
   },
   {
     // YAMLParseError, as are the next two
