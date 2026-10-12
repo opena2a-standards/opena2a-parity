@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { probeWithRetry, absentMustMatchKeys, shapeFailureReport, unresolvedMustMatchKeys, RETRY_CONDITION } from "../src/run-parity.ts";
+import { probeWithRetry, absentMustMatchKeys, shapeFailureReport, unresolvedMustMatchKeys, goldensWithoutMustMatchKey, keylessGoldenReport, RETRY_CONDITION } from "../src/run-parity.ts";
 
 // A participant that exits 0 with a well-formed JSON document that simply does not carry the
 // contract's must-match keys is the third shape the harness meets, after "transient error payload"
@@ -60,6 +60,26 @@ test("unresolvedMustMatchKeys names the keys no participant's golden carries", (
   assert.deepEqual(unresolvedMustMatchKeys(["trustLevel"], [{ trustLevel: null }]), []);
   // with no golden yet there is nothing to resolve against; the missing golden is reported on its own
   assert.deepEqual(unresolvedMustMatchKeys(["score"], []), []);
+});
+
+test("goldensWithoutMustMatchKey names the participants whose golden carries none of the must-match keys", () => {
+  // score resolves in two goldens, so it is not a key in no golden; ai-trust's golden carries none of the list
+  const scored = { score: 7 };
+  const legs = [{ cli: "hma", golden: scored }, { cli: "opena2a", golden: scored }, { cli: "ai-trust", golden: { other: 1 } }];
+  assert.deepEqual(unresolvedMustMatchKeys(["score"], legs.map((leg) => leg.golden)), []);
+  assert.deepEqual(goldensWithoutMustMatchKey(["score"], legs), ["ai-trust"]);
+  // one key carried is enough, whatever it holds and however the key is written
+  const partial = [{ cli: "ai-trust", golden: { verdict: null } }, { cli: "hma", golden: { result: { scanStatus: "warnings" } } }];
+  assert.deepEqual(goldensWithoutMustMatchKey(["verdict", "$.result.scanStatus"], partial), []);
+  assert.deepEqual(goldensWithoutMustMatchKey(["verdict"], partial), ["hma"]);
+  // a golden that is not an object carries no key, and neither does an inherited property
+  const keyless = [null, 5, "score", [], {}].map((golden, i) => ({ cli: `cli-${i}`, golden }));
+  assert.deepEqual(goldensWithoutMustMatchKey(["score", "constructor"], keyless), keyless.map((leg) => leg.cli));
+  // the report names the participant and every key, and says what to do in either case
+  const report = keylessGoldenReport("check-registered-ai", "ai-trust", ["trustLevel", "verdict"]);
+  assert.match(report, /^\[CONTRACT\] check-registered-ai × ai-trust: its golden carries none of the 2 must-match key\(s\): trustLevel, verdict$/m);
+  assert.match(report, /README\.md "Re-baselining goldens"/);
+  assert.match(report, /take it out of participants and add expected\/ai-trust\.skip saying why \(README\.md "Contract model"\)/);
 });
 
 test("a must-match path segment that names an inherited property is absent unless the payload carries it", () => {
