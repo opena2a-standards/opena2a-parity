@@ -36,8 +36,12 @@ fixtures/
 
 `contract.yaml` per fixture. Fields:
 
+- `kind` — `directory` (the default) or `package-name`. A `directory` fixture has an `input/`
+  directory, and each command is run with its path as the last argument. A `package-name` fixture
+  has none: `{PACKAGE}` in a command stands for the contract's `package`, a string. Any other
+  `kind`, and a `package` that is not a string, fail the fixture before any CLI runs
 - `exercises` — which CLI commands the fixture runs, a mapping from each participant to its command string
-- `participants` — list of CLIs (`hma`, `opena2a`, `ai-trust`) for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture, and so does an empty sentinel
+- `participants` — list of CLIs (`hma`, `opena2a`, `ai-trust`) for which a golden exists, each listed once. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture, and so does an empty sentinel. A list that names no CLI would run and compare nothing, and fails the fixture before any CLI runs, as does a CLI listed twice
 - `must_match` — list of keys equal across participating CLIs apart from object key order. A key is
   a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
   `findings[0].checkId`). A key that resolves in no participant's golden fails the fixture, since it
@@ -50,17 +54,16 @@ fixtures/
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
 - `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs).
   A rule is `strip_key` with a `path`, or `replace_regex` with a `pattern` (a regular expression,
-  where the first `{FIXTURE_INPUT_DIR}` stands for the fixture's input directory, or for an empty
-  string in a `kind: package-name` fixture, which has none) and a `replacement`
+  where every `{FIXTURE_INPUT_DIR}` stands for the fixture's input directory, matched literally, or
+  for an empty string in a `kind: package-name` fixture, which has none) and a `replacement`
 
-A contract that is not a mapping fails the fixture before any CLI runs, and the run goes on to the
-next fixture. So do an `exercises` that is not a mapping or that maps a CLI to a number, list or
-mapping, a `participants` entry that names no CLI, and a `normalize` rule with a numeric `path` or
-a `pattern` that is not a regular expression with `input` in place of `{FIXTURE_INPUT_DIR}`. A
-contract can still stop the run with an error instead, for example with a `must_match` entry that
-is a mapping with a `toString` key, or with a `pattern` that is a regular expression with `input`
-there but not with what the fixture puts there, such as `{FIXTURE_INPUT_DIR}*` in a
-`kind: package-name` fixture.
+A `contract.yaml` that is not one valid YAML document (a syntax error, a second document, a
+repeated key) or that is not a mapping fails the fixture before any CLI runs, and the run goes on
+to the next fixture. So do an `exercises` that is not a mapping or that maps a CLI to a number,
+list or mapping, a `participants` entry that names no CLI, and a `normalize` rule with a numeric
+`path` or a `pattern` that is not a regular expression with what the fixture puts in place of
+`{FIXTURE_INPUT_DIR}`: `{FIXTURE_INPUT_DIR}*` in a `kind: package-name` fixture is `*`, which is
+not one.
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 

@@ -224,7 +224,11 @@ export function mustMatchProblems(contract: Pick<FixtureContract, "must_match">)
 export function mayDifferProblems(contract: Pick<FixtureContract, "must_match" | "may_differ">): string[] {
   const entries: unknown = contract.may_differ ?? [];
   if (!Array.isArray(entries)) return ["may_differ is not a list of { path, reason } entries"];
-  const mustMatch = new Set((Array.isArray(contract.must_match) ? contract.must_match : []).map(String).map(canonicalPath));
+  // Key strings only: mustMatchProblems names every other entry, and converting one to a string to
+  // compare it here throws on a mapping with a toString key, which stopped the run with a TypeError.
+  const mustMatch = new Set(
+    (Array.isArray(contract.must_match) ? contract.must_match : []).filter((key: unknown) => typeof key === "string").map(canonicalPath),
+  );
   const problems: string[] = [];
   entries.forEach((entry: unknown, i) => {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
@@ -247,6 +251,20 @@ export function mayDifferProblems(contract: Pick<FixtureContract, "must_match" |
 // contract that held another type there stopped the run with a TypeError ("contract.participants is
 // not iterable", "path.replace is not a function") before the remaining fixtures ran. One line per
 // offending field or entry, naming it; runFixture fails the fixture on any of them before it runs a CLI.
+//
+// kind decides whether the fixture has an input/ directory and what {FIXTURE_INPUT_DIR} stands for.
+// Any value other than package-name was run as a directory fixture without the input/ check and with
+// an empty string for the placeholder, and a package that is not a string threw when it was put in
+// place of {PACKAGE}. A package left without a value is reported by runFixture.
+export function kindProblems(contract: Pick<FixtureContract, "kind" | "package">): string[] {
+  const kind: unknown = contract.kind ?? "directory";
+  if (kind !== "directory" && kind !== "package-name") return [`kind is neither directory nor package-name: ${formatEntry(kind)}`];
+  const packageName: unknown = contract.package;
+  return kind === "directory" || packageName == null || typeof packageName === "string"
+    ? []
+    : [`package is not a package name string: ${formatEntry(packageName)}`];
+}
+
 export function exercisesProblems(contract: Pick<FixtureContract, "exercises">): string[] {
   const exercises: unknown = contract.exercises;
   if (exercises === null || typeof exercises !== "object" || Array.isArray(exercises)) {
@@ -262,9 +280,15 @@ export function participantsProblems(contract: Pick<FixtureContract, "participan
   const clis = Object.keys(BIN_VARS);
   const entries: unknown = contract.participants;
   if (!Array.isArray(entries)) return [`participants is not a list of CLIs (${clis.join(", ")})`];
-  return entries.flatMap((cli: unknown, i) =>
-    typeof cli === "string" && clis.includes(cli) ? [] : [`participants entry ${i + 1} is not one of ${clis.join(", ")}: ${formatEntry(cli)}`],
-  );
+  // A list that names no CLI runs and compares nothing, and the fixture passed on its skip sentinels alone.
+  if (entries.length === 0) {
+    return [`participants lists no CLI, so the fixture would run and compare nothing; list at least one of ${clis.join(", ")}`];
+  }
+  return entries.flatMap((cli: unknown, i) => {
+    if (typeof cli !== "string" || !clis.includes(cli)) return [`participants entry ${i + 1} is not one of ${clis.join(", ")}: ${formatEntry(cli)}`];
+    // A CLI listed twice was run twice and then reported as agreeing with itself.
+    return entries.indexOf(cli) < i ? [`participants entry ${i + 1} repeats ${cli}; list each CLI once`] : [];
+  });
 }
 
 // A rule field that is missing or not a string. An empty replacement is a string: it deletes what the pattern matches.
@@ -273,7 +297,11 @@ function ruleFieldProblems(name: string, field: string, value: unknown, emptyAll
   return typeof value === "string" ? [] : [`${name} ${field} is not a string: ${formatEntry(value)}`];
 }
 
-export function normalizeProblems(contract: Pick<FixtureContract, "normalize">): string[] {
+// fixtureInputDir is what the fixture puts in place of {FIXTURE_INPUT_DIR}: its input directory, or an
+// empty string for a kind: package-name fixture. A pattern is compiled with that value, as normalize
+// compiles it: one that is a regular expression only with another value there ({FIXTURE_INPUT_DIR}*
+// with an empty string is *) passed this check and threw when the first output was normalized.
+export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, fixtureInputDir: string): string[] {
   const rules: unknown = contract.normalize ?? [];
   if (!Array.isArray(rules)) return ["normalize is not a list of rules"];
   const problems: string[] = [];
@@ -290,10 +318,13 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">):
       const patternProblems = ruleFieldProblems(`${name} (replace_regex)`, "pattern", pattern);
       if (patternProblems.length === 0) {
         try {
-          // The input directory is inserted as a literal, so any literal stands for it here.
-          rulePattern(pattern as string, "input");
+          rulePattern(pattern as string, fixtureInputDir);
         } catch (err) {
-          patternProblems.push(`${name} (replace_regex) pattern is not a regular expression: ${(err as Error).message}`);
+          // The error quotes the pattern as compiled, so the line says what the placeholder became.
+          const standingFor = (pattern as string).includes(INPUT_DIR_PLACEHOLDER)
+            ? ` with ${INPUT_DIR_PLACEHOLDER} standing for ${fixtureInputDir === "" ? "an empty string" : "the input directory"}`
+            : "";
+          patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
         }
       }
       problems.push(...patternProblems, ...ruleFieldProblems(`${name} (replace_regex)`, "replacement", replacement, true));
@@ -308,10 +339,15 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">):
   return problems;
 }
 
-// A replace_regex pattern as normalize applies it: {FIXTURE_INPUT_DIR} stands for the fixture's input
-// directory, matched literally.
-function rulePattern(pattern: string, fixtureInputDir: string): RegExp {
-  return new RegExp(pattern.replace("{FIXTURE_INPUT_DIR}", fixtureInputDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "g");
+const INPUT_DIR_PLACEHOLDER = "{FIXTURE_INPUT_DIR}";
+
+// A replace_regex pattern as normalize applies it: every {FIXTURE_INPUT_DIR} stands for the fixture's
+// input directory, matched literally. The directory is put in by a function: given as a replacement
+// string, a path holding $&, $` or $' is expanded by the replace call instead of inserted as it is.
+// Exported for a unit test, since a path holding $` cannot be passed to a stub CLI through the shell.
+export function rulePattern(pattern: string, fixtureInputDir: string): RegExp {
+  const literalDir = fixtureInputDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(pattern.replaceAll(INPUT_DIR_PLACEHOLDER, () => literalDir), "g");
 }
 
 function stripKey(obj: unknown, path: string): void {
@@ -554,13 +590,31 @@ export function runFixture(
     console.error(`[${fixtureName}] missing contract.yaml`);
     return 2;
   }
+  // The parser throws on a syntax error, a second document, a repeated key and an alias to an anchor
+  // that is not set. That fails this fixture, as a contract of the wrong type does, instead of
+  // stopping the run before the remaining fixtures. The first line of the error names the place; the
+  // lines after it quote the file.
+  const contractText = readFileSync(contractPath, "utf8");
+  let parsedContract: unknown;
+  try {
+    parsedContract = parseYaml(contractText);
+  } catch (err) {
+    const reason = (err as Error).message.split("\n")[0].replace(/:$/, "");
+    console.error(`[${fixtureName}] contract.yaml is not one valid YAML document: ${reason}`);
+    return 2;
+  }
   // An empty contract.yaml parses to null, and one holding a list or a bare value has no field to read.
-  const parsedContract: unknown = parseYaml(readFileSync(contractPath, "utf8"));
   if (parsedContract === null || typeof parsedContract !== "object" || Array.isArray(parsedContract)) {
     console.error(`[${fixtureName}] contract.yaml is not a mapping of contract fields (README.md "Contract model")`);
     return 2;
   }
   const contract = parsedContract as FixtureContract;
+  // The checks after this one read kind, so a contract with a kind they cannot read stops here.
+  const kindLines = kindProblems(contract);
+  if (kindLines.length > 0) {
+    for (const problem of kindLines) console.error(`[${fixtureName}] contract.yaml ${problem}`);
+    return 2;
+  }
   const kind: FixtureKind = contract.kind ?? "directory";
 
   if (kind === "directory" && !existsSync(inputDir)) {
@@ -571,12 +625,14 @@ export function runFixture(
     console.error(`[${fixtureName}] kind=package-name requires 'package:' field`);
     return 2;
   }
+  // What a replace_regex rule's {FIXTURE_INPUT_DIR} stands for: a kind: package-name fixture has no input directory.
+  const fixtureInputDir = kind === "directory" ? inputDir : "";
   const contractProblems = [
     ...exercisesProblems(contract),
     ...participantsProblems(contract),
     ...mustMatchProblems(contract),
     ...mayDifferProblems(contract),
-    ...normalizeProblems(contract),
+    ...normalizeProblems(contract, fixtureInputDir),
   ];
   if (contractProblems.length > 0) {
     for (const problem of contractProblems) console.error(`[${fixtureName}] contract.yaml ${problem}`);
@@ -645,7 +701,7 @@ export function runFixture(
       if (unreadGolden) throw unreadGolden;
       const shapeGolden = goldens.get(cli);
       // Normalized inside the probe, so the expected-error decision sees what the golden was copied from.
-      const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], kind === "directory" ? inputDir : "");
+      const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], fixtureInputDir);
       const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden, fixtureNormalize);
       if (!parseOk) {
         console.error(`[${fixtureName}] ${cli} produced non-JSON output (exit=${exitCode}). First 400 chars:\n${stdout.slice(0, 400)}`);
