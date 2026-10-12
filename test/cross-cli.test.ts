@@ -306,7 +306,11 @@ test("runFixture reports a participant's golden only when it carries none of the
     ],
     both.logged.join("\n"),
   );
-  assert.ok(both.logged.includes("[NONE] stub × opena2a: no must-match field compared; not compared: score, scroe (not in its golden)"), both.logged.join("\n"));
+  // its leg's line calls a key in no golden what the sibling leg's line calls it, not a key only its golden lacks
+  assert.ok(
+    both.logged.includes("[NONE] stub × opena2a: no must-match field compared; not compared: score (not in its golden); scroe (in no golden)"),
+    both.logged.join("\n"),
+  );
   assert.ok(both.logged.includes("[OK]   stub × hma: 1 must-match fields equal apart from object key order; not compared: scroe (in no golden)"), both.logged.join("\n"));
 });
 
