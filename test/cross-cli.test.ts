@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { crossCliDiffs, goldensWithoutMustMatchKey, runFixture } from "../src/run-parity.ts";
+import { crossCliDiffs, goldensWithoutMustMatchKey, runFixture, type GoldenReader } from "../src/run-parity.ts";
 
 // Each leg compares one CLI with that CLI's own golden. That alone passes a fixture whose goldens
 // record different values for the same input: it happened in a trial on check-registered-ai, where
@@ -17,8 +17,13 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 // One fixture in a temporary fixtures/ root with a stub per participant: each stub prints `prints`
 // (the text of its own golden when omitted) and exits 0. `golden` and `prints` are JSON text.
-// Returns the fixture's result and every line the harness printed.
-function runStubs(mustMatch: string[], legs: Record<string, { golden: string; prints?: string }>): { rc: number; logged: string[] } {
+// Returns the fixture's result and every line the harness printed. `readGolden`, when given, replaces
+// the harness's own golden reader.
+function runStubs(
+  mustMatch: string[],
+  legs: Record<string, { golden: string; prints?: string }>,
+  readGolden?: GoldenReader,
+): { rc: number; logged: string[] } {
   const dir = mkdtempSync(join(tmpdir(), "parity-cross-cli-"));
   const fixture = join(dir, "fixtures", "stub");
   mkdirSync(join(fixture, "expected"), { recursive: true });
@@ -53,7 +58,7 @@ function runStubs(mustMatch: string[], legs: Record<string, { golden: string; pr
   console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   try {
-    return { rc: runFixture("stub", bins, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") }), logged };
+    return { rc: runFixture("stub", bins, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") }, readGolden), logged };
   } finally {
     console.error = origError;
     console.log = origLog;
@@ -312,6 +317,40 @@ test("runFixture reports a participant's golden only when it carries none of the
     both.logged.join("\n"),
   );
   assert.ok(both.logged.includes("[OK]   stub × hma: 1 must-match fields equal apart from object key order; not compared: scroe (in no golden)"), both.logged.join("\n"));
+});
+
+test("runFixture calls no key in no golden on a keyless leg's line while another participant's golden could not be read", () => {
+  const scored = j({ score: 7 });
+  const legs = { hma: { golden: scored }, opena2a: { golden: j({ other: 1 }) }, "ai-trust": { golden: scored } };
+  // with every golden read, scroe is in none of them, and opena2a's line tells it from score
+  const read = runStubs(["score", "scroe"], legs);
+  assert.equal(read.rc, 1, read.logged.join("\n"));
+  assert.ok(
+    read.logged.includes("[NONE] stub × opena2a: no must-match field compared; not compared: score (not in its golden); scroe (in no golden)"),
+    read.logged.join("\n"),
+  );
+  // Reading ai-trust's golden throws the RangeError a file above 2 GiB does. That golden may carry
+  // scroe, so the fixture is not checked for keys in no golden and opena2a's line calls scroe what it
+  // calls score, although neither golden that was read carries it.
+  const unread = runStubs(["score", "scroe"], legs, (goldenPath) => {
+    if (goldenPath.endsWith(join("expected", "ai-trust.json"))) throw new RangeError("File size is greater than 2 GiB");
+    return JSON.parse(readFileSync(goldenPath, "utf8"));
+  });
+  assert.equal(unread.rc, 1, unread.logged.join("\n"));
+  assert.ok(
+    unread.logged.some((l) => l.includes("[FAIL] stub × ai-trust: the payload or its golden could not be compared (RangeError: File size is greater than 2 GiB)")),
+    unread.logged.join("\n"),
+  );
+  assert.deepEqual(
+    unread.logged.filter((l) => l.includes("[CONTRACT]")).map((l) => l.trim().split("\n")[0]),
+    ["[CONTRACT] stub × opena2a: its golden carries none of the 2 must-match key(s): score, scroe"],
+    unread.logged.join("\n"),
+  );
+  assert.ok(
+    unread.logged.includes("[NONE] stub × opena2a: no must-match field compared; not compared: score, scroe (not in its golden)"),
+    unread.logged.join("\n"),
+  );
+  assert.ok(!unread.logged.some((l) => l.includes("(in no golden)")), unread.logged.join("\n"));
 });
 
 test('README.md "Contract model" says a participant whose golden carries none of the must_match keys fails the fixture', () => {
