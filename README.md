@@ -41,8 +41,10 @@ fixtures/
 - `must_match` — list of keys equal across participating CLIs apart from object key order. A key is
   a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
   `findings[0].checkId`). A key that resolves in no participant's golden fails the fixture, since it
-  would compare nothing. A `must_match` that lists no key compares nothing too, and fails the
-  fixture before any CLI runs, as does an entry that is not a key string (`1`, `null`)
+  would compare nothing. A participant whose golden carries none of the `must_match` keys fails the
+  fixture too: its leg would compare nothing, whatever its CLI prints. A `must_match` that lists no
+  key compares nothing too, and fails the fixture before any CLI runs, as does an entry that is not
+  a key string (`1`, `null`)
 - `may_differ` — list of `{ path, reason }` entries naming keys per-CLI variation is allowed on.
   The harness fails the fixture before running any CLI if an entry has no `reason`, or if its
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
@@ -123,10 +125,15 @@ commit runs no unit tests; bumping its pin turns them on. For a consumer pinned 
 `e7a87e2`, a unit test that fails on `main` turns its parity leg red.
 The three checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
 `GITHUB_REPOSITORY` names another repository, and the one that asks git about this repo's
-checkout also skips in a tree that is not its own git checkout; that file's three tests of its
-helper functions, and the remaining unit tests, which cover the harness that consumers run, stay
-on everywhere.
-A `.gitignore` change lands together with its `EXPECTED_RULES` update in that test.
+checkout also skips in a tree that is not its own git checkout. The two type-check tests in
+`test/typecheck.test.ts` skip for another repository as well. Both files' tests of their helper
+functions, and the remaining unit tests, which cover the harness that consumers run, stay on
+everywhere.
+A `.gitignore` change lands together with its `EXPECTED_RULES` update in `test/ignore-file.test.ts`.
+
+`npm test` also type-checks the harness and its tests. Node runs both by stripping their type
+annotations without checking them, so `test/typecheck.test.ts` runs `tsc` over them with the
+strict options in `tsconfig.json`. `npm run typecheck` runs that check on its own.
 
 ## Intentional-drift demo
 

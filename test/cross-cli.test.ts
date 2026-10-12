@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { crossCliDiffs, runFixture } from "../src/run-parity.ts";
+import { crossCliDiffs, goldensWithoutMustMatchKey, runFixture } from "../src/run-parity.ts";
 
 // Each leg compares one CLI with that CLI's own golden. That alone passes a fixture whose goldens
 // record different values for the same input: it happened in a trial on check-registered-ai, where
@@ -116,7 +116,7 @@ test("crossCliDiffs leaves out a CLI whose golden omits a key even when that CLI
 });
 
 test("crossCliDiffs compares by value: key order is not a difference, null is a value", () => {
-  const legs = [
+  const legs: Parameters<typeof crossCliDiffs>[1] = [
     { cli: "hma", golden: { scores: { a: 1, b: 2 }, level: null }, actual: { scores: { a: 1, b: 2 }, level: null } },
     { cli: "opena2a", golden: { scores: { b: 2, a: 1 }, level: null }, actual: { scores: { b: 2, a: 1 }, level: null } },
   ];
@@ -223,6 +223,101 @@ test("runFixture fails the fixture, instead of throwing, on a golden nested too 
     r.logged.some((l) => l.includes("[FAIL] stub across CLIs: the payload or its golden is nested too deeply to compare (RangeError:")),
     r.logged.join("\n").slice(0, 2000),
   );
+});
+
+// A key a participant's golden omits is absence on both sides for that participant's leg, and one
+// golden carrying a key is enough for the key to count as resolved. So a golden that carried none of
+// the must-match keys, beside two that carried them, gave its leg no field to compare: the leg printed
+// "[OK] ... 1 must-match fields equal" for a CLI that printed 5, {} or null, and the fixture passed.
+test("runFixture fails a fixture with a participant whose golden carries none of the must-match keys, whatever its CLI prints", () => {
+  const scored = j({ score: 7 });
+  for (const prints of ["5", "{}", "null", j({ other: 1 })]) {
+    const r = runStubs(["score"], { hma: { golden: scored }, opena2a: { golden: scored }, "ai-trust": { golden: j({ other: 1 }), prints } });
+    const lines = `ai-trust prints ${prints}\n${r.logged.join("\n")}`;
+    assert.equal(r.rc, 1, lines);
+    const report = r.logged.find((l) => l.includes("[CONTRACT]")) ?? "";
+    assert.ok(report.includes("[CONTRACT] stub × ai-trust: its golden carries none of the 1 must-match key(s): score"), lines);
+    // the report says what to do in either case: a golden that should carry the keys, or a CLI that should not take part
+    assert.ok(report.includes('README.md "Re-baselining goldens"') && report.includes("expected/ai-trust.skip"), lines);
+    // the leg compared no field, so it has nothing to call equal; the two legs that compared one still do
+    assert.ok(r.logged.includes("[NONE] stub × ai-trust: no must-match field compared; not compared: score (not in its golden)"), lines);
+    assert.ok(!r.logged.some((l) => l.startsWith("[OK]   stub × ai-trust")), lines);
+    assert.ok(r.logged.includes("[OK]   stub × hma: 1 must-match fields equal apart from object key order"), lines);
+    assert.ok(r.logged.includes("[OK]   stub × opena2a: 1 must-match fields equal apart from object key order"), lines);
+    assert.ok(!r.logged.some((l) => l.includes("agree on every must-match field")), lines);
+  }
+});
+
+test("runFixture reports a golden that carries no must-match key when it is not an object, and still reports an output that carries one", () => {
+  const scored = j({ score: 7 });
+  for (const golden of ["null", "5", "[]", "{}"]) {
+    const r = runStubs(["score"], { hma: { golden: scored }, opena2a: { golden } });
+    assert.equal(r.rc, 1, `golden ${golden}\n${r.logged.join("\n")}`);
+    assert.ok(
+      r.logged.some((l) => l.includes("[CONTRACT] stub × opena2a: its golden carries none of the 1 must-match key(s): score")),
+      `golden ${golden}\n${r.logged.join("\n")}`,
+    );
+  }
+  // the output carrying a key its golden omits is a drift of that leg, as it is for a golden that omits one key
+  const printed = runStubs(["score"], { hma: { golden: scored }, opena2a: { golden: j({ other: 1 }), prints: scored } });
+  assert.equal(printed.rc, 1, printed.logged.join("\n"));
+  assert.ok(printed.logged.some((l) => l.includes("[CONTRACT] stub × opena2a: its golden carries none of the 1 must-match key(s): score")), printed.logged.join("\n"));
+  assert.ok(printed.logged.some((l) => l.includes("[FAIL] stub × opena2a: 1 must-match field(s) drifted")), printed.logged.join("\n"));
+  assert.ok(!printed.logged.some((l) => l.startsWith("[NONE]") || l.startsWith("[OK]   stub × opena2a")), printed.logged.join("\n"));
+});
+
+test("runFixture reports a participant's golden only when it carries none of the must-match keys, and once where no golden carries any", () => {
+  // one key carried is enough: ai-trust's golden omits scanStatus on check-registered-ai and carries the rest
+  const registered = { name: "@scope/server", trustLevel: 3 };
+  const scanned = j({ ...registered, scanStatus: "warnings" });
+  const partial = runStubs(["name", "trustLevel", "scanStatus"], { hma: { golden: scanned }, "ai-trust": { golden: j(registered) }, opena2a: { golden: scanned } });
+  assert.equal(partial.rc, 0, partial.logged.join("\n"));
+  assert.ok(!partial.logged.some((l) => l.includes("[CONTRACT]")), partial.logged.join("\n"));
+  // every key in no golden is one problem, reported for the fixture and not again for each participant
+  const scored = j({ score: 7 });
+  const misspelt = runStubs(["scroe"], { hma: { golden: scored }, opena2a: { golden: scored } });
+  assert.equal(misspelt.rc, 1, misspelt.logged.join("\n"));
+  assert.deepEqual(
+    misspelt.logged.filter((l) => l.includes("[CONTRACT]")).map((l) => l.trim().split("\n")[0]),
+    ["[CONTRACT] stub: 1 must-match key(s) resolve in no participant's golden: scroe"],
+    misspelt.logged.join("\n"),
+  );
+  // beside a key in no golden, the participant's report still names every key its golden lacks
+  const both = runStubs(["score", "scroe"], { hma: { golden: scored }, opena2a: { golden: j({ other: 1 }) } });
+  assert.equal(both.rc, 1, both.logged.join("\n"));
+  assert.deepEqual(
+    both.logged.filter((l) => l.includes("[CONTRACT]")).map((l) => l.trim().split("\n")[0]),
+    [
+      "[CONTRACT] stub: 1 must-match key(s) resolve in no participant's golden: scroe",
+      "[CONTRACT] stub × opena2a: its golden carries none of the 2 must-match key(s): score, scroe",
+    ],
+    both.logged.join("\n"),
+  );
+  assert.ok(both.logged.includes("[NONE] stub × opena2a: no must-match field compared; not compared: score, scroe (not in its golden)"), both.logged.join("\n"));
+  assert.ok(both.logged.includes("[OK]   stub × hma: 1 must-match fields equal apart from object key order; not compared: scroe (in no golden)"), both.logged.join("\n"));
+});
+
+test('README.md "Contract model" says a participant whose golden carries none of the must_match keys fails the fixture', () => {
+  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+  const section = readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "";
+  assert.ok(section !== "", 'README.md has no "Contract model" section');
+  assert.match(section.replace(/\s+/g, " "), /A participant whose golden carries none of the `must_match` keys fails the fixture too/);
+});
+
+test("every committed participant golden carries at least one of its fixture's must-match keys", () => {
+  const fixtures = readdirSync(join(repoRoot, "fixtures")).filter((name) => existsSync(join(repoRoot, "fixtures", name, "contract.yaml")));
+  assert.ok(fixtures.length > 0, "expected at least one fixtures/*/contract.yaml");
+  let goldens = 0;
+  for (const name of fixtures) {
+    const contract = parseYaml(readFileSync(join(repoRoot, "fixtures", name, "contract.yaml"), "utf8")) as { participants: string[]; must_match: string[] };
+    const legs = contract.participants.map((cli) => ({
+      cli,
+      golden: JSON.parse(readFileSync(join(repoRoot, "fixtures", name, "expected", `${cli}.json`), "utf8")) as unknown,
+    }));
+    goldens += legs.length;
+    assert.deepEqual(goldensWithoutMustMatchKey(contract.must_match, legs), [], `fixtures/${name}: a participant's golden carries no must-match key`);
+  }
+  assert.ok(goldens > 0, "expected at least one participant golden");
 });
 
 test("the committed goldens of every fixture agree on each must-match key across the CLIs that carry it", () => {

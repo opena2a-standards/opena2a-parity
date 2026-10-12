@@ -322,7 +322,8 @@ function sortKeysReplacer() {
 // absent") and what #21 broke: it read every absent must-match key as a wrong-shape document and
 // turned hackmyagent main's required parity context red on ai-trust rows that had not changed.
 // Without a golden every absent key counts, so the fall-through case #21 was written for (a scan
-// document where the golden carries found, trustLevel, verdict) is still a SHAPE failure.
+// document where the golden carries found, trustLevel, verdict) is still a SHAPE failure. A golden
+// that omits every key leaves nothing here to be absent; runFixture reports that golden itself.
 export function absentMustMatchKeys(parsed: unknown, mustMatch: string[], golden?: unknown): string[] {
   return mustMatch.filter(
     (key) => getPath(parsed, key) === undefined && (golden === undefined || getPath(golden, key) !== undefined),
@@ -331,11 +332,14 @@ export function absentMustMatchKeys(parsed: unknown, mustMatch: string[], golden
 
 // One line per participant, naming every absent key. Distinct from [FAIL] (value drift) on purpose:
 // a document of the wrong shape is not a drift of the right one, and it was never a retry candidate.
+// The remark about exit 0 is printed only for a leg that exited 0: on a non-zero exit it described
+// an exit code the same line had just reported otherwise.
 export function shapeFailureReport(label: string, exitCode: number, absent: string[], total: number, errorField?: unknown): string {
   const head = `[SHAPE] ${label}: exit=${exitCode}, ${absent.length} of ${total} must-match key(s) ABSENT from the payload: ${absent.join(", ")}`;
+  const exitZeroRemark = exitCode === 0 ? " (exit 0 is not evidence of the right work)" : "";
   const why = errorField
     ? `operational error payload after ${PROBE_RETRIES} attempts (error: ${String(errorField)})`
-    : "a well-formed document of a different shape (exit 0 is not evidence of the right work)";
+    : `a well-formed document of a different shape${exitZeroRemark}`;
   return `${head}\n  ${why}; not retried: the retry is ${RETRY_CONDITION}`;
 }
 
@@ -355,6 +359,24 @@ export function unresolvedKeysReport(fixtureName: string, unresolved: string[]):
     `[CONTRACT] ${fixtureName}: ${unresolved.length} must-match key(s) resolve in no participant's golden: ${unresolved.join(", ")}`,
     `  A key is a dot-separated path with a numeric segment for an array index (findings.0.checkId).`,
     `  A key no golden carries compares nothing, so it fails the fixture instead of counting as equal.`,
+  ].join("\n");
+}
+
+// The participants whose golden carries none of the contract's must-match keys. A key a golden omits
+// is absence on both sides for that participant's leg, and one golden carrying a key keeps it out of
+// unresolvedMustMatchKeys. So a golden that omitted every key, beside one that carried them, left its
+// leg no field to compare, and the leg counted every key equal whatever the CLI printed: a number, an
+// empty object, null. A golden that is not an object carries no key either.
+export function goldensWithoutMustMatchKey(mustMatch: string[], legs: { cli: string; golden: unknown }[]): string[] {
+  return legs.filter((leg) => mustMatch.every((key) => getPath(leg.golden, key) === undefined)).map((leg) => leg.cli);
+}
+
+export function keylessGoldenReport(fixtureName: string, cli: string, mustMatch: string[]): string {
+  return [
+    `[CONTRACT] ${fixtureName} × ${cli}: its golden carries none of the ${mustMatch.length} must-match key(s): ${mustMatch.join(", ")}`,
+    `  A leg whose golden carries no must-match key compares nothing, so it fails the fixture instead of counting as equal.`,
+    `  If ${cli} prints the keys, copy its verified capture over the golden (README.md "Re-baselining goldens"); if it does not exercise`,
+    `  this fixture, take it out of participants and add expected/${cli}.skip saying why (README.md "Contract model").`,
   ].join("\n");
 }
 
@@ -432,8 +454,9 @@ const readGoldenFile: GoldenReader = (goldenPath) => JSON.parse(readFileSync(gol
 // against a stub CLI in a temporary directory instead of the repository's own fixtures/ and actual/.
 // Returns 0 for a fixture that passes, 1 for any failure found while running the fixture and 2 for a
 // contract the harness cannot run. A failed leg is one such failure; so are a must-match key in no golden,
-// a missing golden, a participant without an exercises entry, a difference between CLIs and a missing or
-// empty skip sentinel, so a fixture can return 1 after every leg printed [OK].
+// a participant's golden that carries no must-match key, a missing golden, a participant without an
+// exercises entry, a difference between CLIs and a missing or empty skip sentinel, so a fixture can
+// return 1 after every leg printed [OK].
 export function runFixture(
   fixtureName: string,
   bins: Record<CLI, string>,
@@ -494,6 +517,16 @@ export function runFixture(
     failures += unresolved.length;
   }
   const mustMatch = contract.must_match.filter((key) => !unresolved.includes(key));
+
+  // A participant whose golden carries none of the keys fails the fixture here. Its leg still runs,
+  // so its capture is written and an output that carries a key the golden omits is still reported.
+  // Where every key is in no golden, the report above already covers each participant.
+  const keyless =
+    mustMatch.length > 0 ? goldensWithoutMustMatchKey(contract.must_match, [...goldens].map(([cli, golden]) => ({ cli, golden }))) : [];
+  for (const cli of keyless) {
+    console.error(`\n${keylessGoldenReport(fixtureName, cli, contract.must_match)}`);
+    failures++;
+  }
 
   for (const cli of contract.participants) {
     const invocation = contract.exercises[cli];
@@ -592,9 +625,12 @@ export function runFixture(
       console.error(`  Intended output change? Re-baseline golden-first: README.md "Re-baselining goldens".`);
       failures += diffs.length;
     } else {
-      const notCompared = unresolved.length > 0 ? `; not compared: ${unresolved.join(", ")} (in no golden)` : "";
+      const keylessGolden = keyless.includes(cli);
+      const notCompared = keylessGolden
+        ? `; not compared: ${contract.must_match.join(", ")} (not in its golden)`
+        : unresolved.length > 0 ? `; not compared: ${unresolved.join(", ")} (in no golden)` : "";
       // A leg that compared no field has nothing to call equal, so it does not print [OK].
-      if (mustMatch.length === 0) {
+      if (mustMatch.length === 0 || keylessGolden) {
         console.log(`[NONE] ${fixtureName} × ${cli}: no must-match field compared${notCompared}`);
       } else {
         console.log(`[OK]   ${fixtureName} × ${cli}: ${mustMatch.length} must-match fields equal apart from object key order${notCompared}`);

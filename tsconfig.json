@@ -1,0 +1,17 @@
+{
+  // Node runs the harness and its tests by stripping their type annotations, so the check allows
+  // only syntax that strips cleanly and import specifiers that end in .ts, and emits nothing.
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

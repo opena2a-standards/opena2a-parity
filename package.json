@@ -10,10 +10,15 @@
   "scripts": {
     "parity": "node --experimental-strip-types src/run-parity.ts",
     "parity:drift-demo": "INTENTIONAL_DRIFT=1 node --experimental-strip-types src/run-parity.ts",
-    "test": "PARITY_PROBE_BACKOFF_MS=1 node --experimental-strip-types --test \"test/*.test.ts\""
+    "test": "PARITY_PROBE_BACKOFF_MS=1 node --experimental-strip-types --test \"test/*.test.ts\"",
+    "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
     "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
   },
   "repository": {
     "type": "git",
