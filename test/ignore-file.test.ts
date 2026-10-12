@@ -31,8 +31,8 @@ const EXPECTED_RULES = [
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-// A consumer's parity job runs `npm test` from this repository's main on every cross-repository
-// call. These tests check this repository's own ignore file, which has no bearing on a consumer's
+// A consumer whose workflow pin carries the unit-test step runs `npm test` from this repository's
+// main on every cross-repository call. These tests check this repository's own ignore file, which has no bearing on a consumer's
 // CLI parity, so they run locally and in this repository's own CI only.
 export function skipReason(repository: string | undefined): string | false {
   if (!repository || repository.endsWith("/opena2a-parity")) return false;

@@ -104,7 +104,10 @@ red on parity until the golden lands. If a re-baseline ever costs more than a da
 record the measurement and reopen the ordering decision.
 
 A consumer's parity job also runs this repo's harness unit tests (`npm test`) from
-`main`, so a unit test that fails on `main` turns every consumer's parity leg red.
+`main` when its `uses:` pin is commit `e7a87e2` or later, the commit that added that step.
+A reusable workflow's steps come from the pinned commit, so a consumer pinned to an earlier
+commit runs no unit tests; bumping its pin turns them on. For a consumer pinned at or after
+`e7a87e2`, a unit test that fails on `main` turns its parity leg red.
 The three checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
 `GITHUB_REPOSITORY` names another repository, and the one that asks git about this repo's
 checkout also skips in a tree that is not its own git checkout; that file's three tests of its
