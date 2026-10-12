@@ -76,11 +76,14 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
 // burning the retry budget and logging a real failure on a run that passes. A
 // different error on that fixture (a registry timeout) is still retried, and if
 // it still differs after the last attempt runFixture fails the leg whatever the
-// must-match keys say: a timeout payload there carries name, found: false and
-// ecosystem with the expected values, so the error is the only field that tells
-// "not found" from "not reached". A CLI that rewords that error on purpose
-// re-baselines its golden first, like any other intended output change; if the
-// rewording was not intended, it is a CLI regression and the golden stays as it is.
+// must-match keys say: ai-trust's timeout payload there carries name, found: false
+// and ecosystem with the expected values, so the error is the only field that
+// tells "not found" from "not reached". hackmyagent's unreachable-registry payload
+// (timeout, 5xx and network error alike) carries no ecosystem, so runFixture
+// reports that leg as a SHAPE failure before the error comparison is reached. A
+// CLI that rewords that error on purpose re-baselines its golden first, like any
+// other intended output change; if the rewording was not intended, it is a CLI
+// regression and the golden stays as it is.
 //
 // Goldens are copied from normalized captures, so the decision is made on the
 // normalized payload, never the raw one.

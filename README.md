@@ -60,9 +60,12 @@ every CLI matches its own golden. If the CLIs differ on purpose, the key belongs
 An `error` in a CLI's output is checked against that CLI's own golden, after normalization,
 even where the contract lists `error` under `may_differ` (which lets the wording differ between
 CLIs). An error the golden does not record is tried up to three times (two retries), and if it
-still differs after the last attempt the leg fails: on `check-not-found` a registry timeout carries the same
-`name`, `found` and `ecosystem` as a real not-found, so the error is what tells them apart. A CLI
-that rewords its error on purpose re-baselines its golden first, like any other intended output
+still differs after the last attempt the leg fails. On `check-not-found`, ai-trust's registry timeout carries
+the same `name`, `found` and `ecosystem` as a real not-found, so the error is what tells them
+apart. hackmyagent's payload for an unreachable registry (a timeout, a 5xx and a network error
+share one payload) carries `name` and `found: false` but no `ecosystem`, so its leg fails as a
+`[SHAPE]` failure naming the absent key instead of through the error comparison. A CLI that
+rewords its error on purpose re-baselines its golden first, like any other intended output
 change; if the rewording was not intended, it is a CLI regression and the golden stays as it is.
 
 ## Adding a fixture

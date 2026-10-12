@@ -357,6 +357,51 @@ test("runFixture fails a not-found leg on a registry timeout that carries every 
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
 });
 
+test("runFixture reports hackmyagent's unreachable-registry payload, which carries no ecosystem, as a SHAPE failure", () => {
+  // the keys hackmyagent 0.33.2 emits for `check --no-scan --json` when the registry is not reached
+  const unreachable = {
+    hackmyagentVersion: "0.33.2",
+    name: "ghost",
+    source: "registry",
+    found: false,
+    error: 'Registry query for "ghost" failed: Registry network error: fetch failed',
+    errorClass: "registry-unreachable",
+    coverage: { measured: false, examined: 0, total: 0, unit: "unit", reason: "target-unreachable" },
+  };
+  const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, unreachable, 2);
+  assert.equal(r.invocations, 3);
+  assert.equal(r.rc, 1);
+  const shape = r.logged.find((l) => l.includes("[SHAPE] stub × hma"));
+  assert.ok(shape, r.logged.join("\n"));
+  assert.match(shape, /1 of 3 must-match key\(s\) ABSENT from the payload: ecosystem\n/);
+  assert.match(shape, /operational error payload after 3 attempts \(error: Registry query for "ghost" failed/);
+  // the leg fails on its shape, so the error comparison is never reached
+  assert.ok(!r.logged.some((l) => l.includes("[FAIL] stub × hma")), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
+});
+
+test("README.md and the retry comment name the CLI whose registry timeout carries the not-found keys, and the one whose does not", () => {
+  const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  const docs = [
+    ["README.md", read("README.md").replace(/\s+/g, " ")],
+    ["src/run-parity.ts", read("src/run-parity.ts").replace(/\n\s*\/\/ ?/g, " ").replace(/\s+/g, " ")],
+  ] as const;
+  for (const [path, text] of docs) {
+    const sentences = text.split(/(?<=\.)\s+/).filter((s) => /\bcarr(?:y|ies)\b/.test(s) && /\becosystem\b/.test(s));
+    assert.ok(sentences.length >= 2, `${path}: ${sentences.join(" | ")}`);
+    // not every CLI's timeout payload looks like a not-found, so each sentence says whose it describes
+    for (const s of sentences) assert.match(s, /\b(?:ai-trust|hackmyagent)'s\b/, `${path}: ${s}`);
+    assert.ok(
+      sentences.some((s) => /\bai-trust's\b/.test(s) && !/\bno `?ecosystem\b/.test(s)),
+      `${path}: no sentence says ai-trust's timeout carries ecosystem`,
+    );
+    assert.ok(
+      sentences.some((s) => /\bhackmyagent's\b/.test(s) && /\bno `?ecosystem\b/.test(s) && /\bSHAPE\b/.test(s)),
+      `${path}: no sentence says hackmyagent's unreachable-registry payload omits ecosystem and fails as SHAPE`,
+    );
+  }
+});
+
 // A golden may record a structured error; an equal object is the same error, not a reworded one.
 const OBJECT_ERROR_GOLDEN = { name: "ghost", found: false, ecosystem: "npm", error: { code: "NOT_FOUND", message: "ghost" } };
 
