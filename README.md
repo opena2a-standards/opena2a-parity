@@ -80,8 +80,11 @@ participant's leg without running that CLI, and the run goes on to the remaining
 fixtures. A `contract.yaml` that is a directory, a FIFO, a file without read permission or a
 symbolic link that dangles or loops fails its fixture before any CLI runs, a skip sentinel that is
 a directory, a FIFO or a file without read permission fails its fixture as an empty one does, and
-a capture whose path under `actual/` is not a file (a directory or a FIFO) or that cannot be
-written (its fixture's directory there is a file) fails its participant's leg.
+a capture whose path under `actual/` is not a file (a directory, a FIFO or a device) or that
+cannot be written (its fixture's directory there is a file) fails its participant's leg. So does
+an output that a `pattern` cannot be run on when it is normalized: the engine can compile the
+pattern again there, deeper in the call stack than the load check, and a pattern near its compile
+stack limit then fails to compile.
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 

@@ -338,9 +338,10 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, 
       } else if (patternProblems.length === 0) {
         // Each line quotes the pattern as compiled, which says what the placeholder became.
         const standingFor = holdsPlaceholder ? ` with ${INPUT_DIR_PLACEHOLDER} standing for the input directory` : "";
+        const source = ruleSource(pattern as string, fixtureInputDir);
         let compiled: RegExp | undefined;
         try {
-          const candidate = rulePattern(pattern as string, fixtureInputDir);
+          const candidate = new RegExp(source, "g");
           // The engine compiles a pattern the first time it runs it, once for text of one-byte characters
           // and once for text with a wider one, and only then throws for one too large to compile: 100,000
           // literal characters passed new RegExp and threw when the first output was normalized.
@@ -348,12 +349,12 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, 
           candidate.exec(WIDE_CHARACTER);
           compiled = candidate;
         } catch (err) {
-          patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
+          patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${compileErrorMessage(err as Error, source)}`);
         }
         // A pattern written without the placeholder is left as its author wrote it: ^$ replaces a value that is an empty string.
         if (compiled && holdsPlaceholder && replacement !== "" && canMatchEmpty(compiled.source)) {
           patternProblems.push(
-            `${name} (replace_regex) pattern can match empty text${standingFor}: ${compiled} would insert the replacement where it matched no text`,
+            `${name} (replace_regex) pattern can match empty text${standingFor}: ${quotedPattern(compiled.source)} would insert the replacement where it matched no text`,
           );
         }
       }
@@ -378,8 +379,30 @@ const WIDE_CHARACTER = String.fromCharCode(0x100);
 // string, a path holding $&, $` or $' is expanded by the replace call instead of inserted as it is.
 // Exported for a unit test, since a path holding $` cannot be passed to a stub CLI through the shell.
 export function rulePattern(pattern: string, fixtureInputDir: string): RegExp {
+  return new RegExp(ruleSource(pattern, fixtureInputDir), "g");
+}
+
+// The text rulePattern compiles, which is also the text the engine repeats in its message for a pattern it will not compile.
+function ruleSource(pattern: string, fixtureInputDir: string): string {
   const literalDir = fixtureInputDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(pattern.replaceAll(INPUT_DIR_PLACEHOLDER, () => literalDir), "g");
+  return pattern.replaceAll(INPUT_DIR_PLACEHOLDER, () => literalDir);
+}
+
+// How many characters of a pattern a line that reports it quotes. The engine's message repeats the whole
+// pattern, so a rule of 100,000 characters printed a line of as many.
+const QUOTED_PATTERN_LENGTH = 200;
+
+// A pattern as a line that reports it quotes it, with the g flag rulePattern gives it. One longer than
+// QUOTED_PATTERN_LENGTH characters is cut there, without splitting a surrogate pair, and the line says how long it is.
+function quotedPattern(source: string): string {
+  if (source.length <= QUOTED_PATTERN_LENGTH) return `/${source}/g`;
+  const end = /[\uD800-\uDBFF]/.test(source[QUOTED_PATTERN_LENGTH - 1]) ? QUOTED_PATTERN_LENGTH - 1 : QUOTED_PATTERN_LENGTH;
+  return `/${source.slice(0, end)}…/g (the first ${end} of its ${source.length} characters)`;
+}
+
+// The engine's message for a pattern it will not compile, with the pattern it repeats quoted as quotedPattern quotes it.
+function compileErrorMessage(err: Error, source: string): string {
+  return err.message.replace(`/${source}/g`, () => quotedPattern(source));
 }
 
 // Whether a regular expression, given as the source of one compiled without the u or v flag (as
@@ -511,13 +534,30 @@ function replaceInStrings(obj: unknown, pattern: RegExp, replacement: string): u
   return obj;
 }
 
+// A replace_regex pattern the engine would not compile when normalize ran it on an output. The load check
+// compiles each pattern where the call stack is shallow. normalize builds the pattern again, and the
+// engine can compile it again at the depth of the first string it reaches, once it has dropped the code
+// it compiled before: a pattern near the engine's compile stack limit then throws "Stack overflow", a
+// SyntaxError, which stopped the run before the remaining legs and fixtures ran.
+class NormalizeRuleError extends Error {
+  constructor(index: number, err: SyntaxError, source: string) {
+    super(`normalize rule ${index + 1} (replace_regex) pattern could not be run on the output: ${compileErrorMessage(err, source)}`);
+  }
+}
+
 function normalize(parsed: unknown, rules: FixtureContract["normalize"], fixtureInputDir: string): unknown {
   let out = structuredClone(parsed);
-  for (const rule of rules) {
+  for (const [i, rule] of rules.entries()) {
     if (rule.kind === "strip_key" && rule.path) {
       stripKey(out, rule.path);
     } else if (rule.kind === "replace_regex" && rule.pattern != null && rule.replacement != null) {
-      out = replaceInStrings(out, rulePattern(rule.pattern, fixtureInputDir), rule.replacement);
+      const source = ruleSource(rule.pattern, fixtureInputDir);
+      try {
+        out = replaceInStrings(out, new RegExp(source, "g"), rule.replacement);
+      } catch (err) {
+        if (!(err instanceof SyntaxError)) throw err;
+        throw new NormalizeRuleError(i, err, source);
+      }
     }
   }
   return out;
@@ -949,7 +989,8 @@ export function runFixture(
       const capture = stableStringify(parsedVal);
       // A capture that cannot be written, such as one whose path is a directory or whose fixture's directory
       // under actual/ is a file, fails its leg instead of stopping the run, and so does one whose path is a
-      // FIFO, which held the run; the catch below rethrows any error but a RangeError.
+      // FIFO, which held the run, or a device, which took the capture; the catch below rethrows any error
+      // but a RangeError and a NormalizeRuleError.
       try {
         mkdirSync(dirname(actualPath), { recursive: true });
         writeTextFile(actualPath, capture);
@@ -985,8 +1026,10 @@ export function runFixture(
 
       results[cli] = { cli, exitCode, stdout, parsed: parsedVal };
     } catch (err) {
-      if (!(err instanceof RangeError)) throw err;
-      console.error(`\n${comparisonFailureReport(`${fixtureName} × ${cli}`, err)}`);
+      // A pattern normalize could not run on the output fails its leg, as a payload that cannot be compared does.
+      if (err instanceof NormalizeRuleError) console.error(`\n[FAIL] ${fixtureName} × ${cli}: ${err.message}`);
+      else if (err instanceof RangeError) console.error(`\n${comparisonFailureReport(`${fixtureName} × ${cli}`, err)}`);
+      else throw err;
       failures++;
     }
   }
