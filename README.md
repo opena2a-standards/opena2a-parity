@@ -50,12 +50,17 @@ fixtures/
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
 - `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs).
   A rule is `strip_key` with a `path`, or `replace_regex` with a `pattern` (a regular expression,
-  where `{FIXTURE_INPUT_DIR}` stands for the fixture's input directory) and a `replacement`
+  where the first `{FIXTURE_INPUT_DIR}` stands for the fixture's input directory, or for an empty
+  string in a `kind: package-name` fixture, which has none) and a `replacement`
 
-A contract that is not a mapping, or that holds another type in one of these fields (an
-`exercises` that is not a mapping of command strings, a `participants` entry that names no CLI, a
-`normalize` rule with a numeric `path` or a pattern that is not a regular expression), fails the
-fixture before any CLI runs, and the run goes on to the next fixture.
+A contract that is not a mapping fails the fixture before any CLI runs, and the run goes on to the
+next fixture. So do an `exercises` that is not a mapping or that maps a CLI to a number, list or
+mapping, a `participants` entry that names no CLI, and a `normalize` rule with a numeric `path` or
+a `pattern` that is not a regular expression with `input` in place of `{FIXTURE_INPUT_DIR}`. A
+contract can still stop the run with an error instead, for example with a `must_match` entry that
+is a mapping with a `toString` key, or with a `pattern` that is a regular expression with `input`
+there but not with what the fixture puts there, such as `{FIXTURE_INPUT_DIR}*` in a
+`kind: package-name` fixture.
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 
