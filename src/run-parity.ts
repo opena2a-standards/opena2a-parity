@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, lstatSync, statSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
@@ -306,8 +306,11 @@ function ruleFieldProblems(name: string, field: string, value: unknown, emptyAll
 // with an empty string is *) passed this check and threw when the first output was normalized. One
 // that is empty with that value ({FIXTURE_INPUT_DIR} alone with an empty string) passed as a pattern
 // that is not empty, and matched at every position of every string: "ab" became "<IN>a<IN>b<IN>".
-// So did one that is not empty with that value and matches the empty string ((?:{FIXTURE_INPUT_DIR})
-// with an empty string is (?:)), so a pattern that holds the placeholder is also run on an empty string.
+// So did one that is not empty with that value and can match empty text ((?:{FIXTURE_INPUT_DIR}) with
+// an empty string is (?:)), so a pattern that holds the placeholder fails if canMatchEmpty finds it can.
+// Running it on an empty string alone passed \b{FIXTURE_INPUT_DIR}, which turned "ab cd" into
+// "<IN>ab<IN> <IN>cd<IN>". A rule whose replacement is empty is not checked for this: where it matched
+// no text it inserts nothing.
 export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, fixtureInputDir: string): string[] {
   const rules: unknown = contract.normalize ?? [];
   if (!Array.isArray(rules)) return ["normalize is not a list of rules"];
@@ -340,9 +343,9 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, 
             patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
           }
           // A pattern written without the placeholder is left as its author wrote it: ^$ replaces a value that is an empty string.
-          if (compiled && holdsPlaceholder && compiled.test("")) {
+          if (compiled && holdsPlaceholder && replacement !== "" && canMatchEmpty(compiled.source)) {
             patternProblems.push(
-              `${name} (replace_regex) pattern matches the empty string${standingFor}: ${compiled} would insert the replacement where it matched no text`,
+              `${name} (replace_regex) pattern can match empty text${standingFor}: ${compiled} would insert the replacement where it matched no text`,
             );
           }
         }
@@ -368,6 +371,92 @@ const INPUT_DIR_PLACEHOLDER = "{FIXTURE_INPUT_DIR}";
 export function rulePattern(pattern: string, fixtureInputDir: string): RegExp {
   const literalDir = fixtureInputDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(pattern.replaceAll(INPUT_DIR_PLACEHOLDER, () => literalDir), "g");
+}
+
+// Whether a regular expression, given as the source of one compiled without the u or v flag (as
+// rulePattern compiles it), can match empty text in some string: whether one of its alternatives holds
+// no part that must match a character. An assertion (^, $, \b, \B or a lookaround) matches no character,
+// so it counts as able to match empty text whatever it asserts, as \b does next to a word and (?=b)
+// before a b; so does a backreference, which matches empty text where its group took no part. Each other
+// part matches a character unless its quantifier allows it to repeat zero times.
+function canMatchEmpty(source: string): boolean {
+  // Its last alternative matches the empty string, so this reports how many groups the source holds and
+  // whether one is named, which decide what \1 and \k<name> are, without parsing the source for them.
+  const groups = new RegExp(`(?:${source})|`).exec("") as RegExpExecArray;
+  const groupCount = groups.length - 1;
+  const named = groups.groups !== undefined;
+  let i = 0;
+
+  const disjunction = (): boolean => {
+    let empty = alternative();
+    while (source[i] === "|") {
+      i++;
+      if (alternative()) empty = true;
+    }
+    return empty;
+  };
+
+  const alternative = (): boolean => {
+    let empty = true;
+    while (i < source.length && source[i] !== "|" && source[i] !== ")") {
+      const atomEmpty = atom();
+      // How many times the part must match: once, or as its quantifier says. A { that does not open a
+      // quantifier is a character matched as itself.
+      const quantifier = /^(?:[*+?]|\{(\d+)(?:,\d*)?\})\??/.exec(source.slice(i));
+      i += quantifier?.[0].length ?? 0;
+      const least = quantifier === null || quantifier[0][0] === "+" ? 1 : quantifier[0][0] === "{" ? Number(quantifier[1]) : 0;
+      if (least > 0 && !atomEmpty) empty = false;
+    }
+    return empty;
+  };
+
+  const atom = (): boolean => {
+    const c = source[i++];
+    if (c === "^" || c === "$") return true;
+    if (c === "\\") return escape();
+    if (c === "[") {
+      // A class matches one character. Without the v flag it holds no class, so it ends at the first ] not escaped.
+      while (i < source.length && source[i] !== "]") i += source[i] === "\\" ? 2 : 1;
+      i++;
+      return false;
+    }
+    if (c === "(") {
+      const head = /^\?(<?[=!]|<[^>]*>|[a-zA-Z]*(?:-[a-zA-Z]*)?:)/.exec(source.slice(i));
+      i += head?.[0].length ?? 0;
+      const inner = disjunction();
+      i++; // the closing )
+      return /^<?[=!]$/.test(head?.[1] ?? "") || inner;
+    }
+    return false; // ., or a character matched as itself, such as a ] or } that closes nothing
+  };
+
+  // The part after a backslash: an assertion, a backreference or one character, whose escape may take
+  // up to three octal digits, two hex digits after x, four after u and a letter after c.
+  const escape = (): boolean => {
+    const c = source[i++];
+    if (c === "b" || c === "B") return true;
+    if (/[1-9]/.test(c)) {
+      // Without the u flag, \ and a number greater than the count of groups is an octal escape or the digit itself.
+      const number = c + (/^\d*/.exec(source.slice(i)) as RegExpExecArray)[0];
+      if (Number(number) <= groupCount) {
+        i += number.length - 1;
+        return true;
+      }
+    }
+    if (c === "k" && named) {
+      i = source.indexOf(">", i) + 1;
+      return true;
+    }
+    if (c === "c" && !/[a-zA-Z]/.test(source[i] ?? "")) {
+      i--; // a backslash matched as itself, followed by the c
+      return false;
+    }
+    const tail = /[0-3]/.test(c) ? /^[0-7]{0,2}/ : /[4-7]/.test(c) ? /^[0-7]?/ : c === "x" ? /^(?:[\da-fA-F]{2})?/ : c === "u" ? /^(?:[\da-fA-F]{4})?/ : c === "c" ? /^./ : /^/;
+    i += (tail.exec(source.slice(i)) as RegExpExecArray)[0].length;
+    return false;
+  };
+
+  return disjunction();
 }
 
 function stripKey(obj: unknown, path: string): void {
@@ -583,30 +672,76 @@ function comparisonFailureReport(label: string, err: RangeError): string {
   return `[FAIL] ${label}: the payload or its golden ${reason} (RangeError: ${err.message})`;
 }
 
-// How runFixture reads a participant's golden. A unit test passes its own, since the RangeError a golden
-// over the size limit throws cannot be produced with a committed fixture.
-export type GoldenReader = (goldenPath: string) => unknown;
-const readGoldenFile: GoldenReader = (goldenPath) => JSON.parse(readFileSync(goldenPath, "utf8"));
-
-// An error the operating system returned for a call, such as reading a golden that is a directory
-// (EISDIR) or opening one the harness may not read (EACCES). Node names the call on each such error,
-// so a TypeError from a mistake in the harness is not taken for one.
-type SystemCallError = Error & { syscall: string };
+// An error the operating system returned for a call, such as opening a file the harness may not read
+// (EACCES) or looking up a symbolic link that dangles (ENOENT) or loops (ELOOP). Node names the call on
+// each such error, so a TypeError from a mistake in the harness is not taken for one.
+type SystemCallError = Error & { syscall: string; code?: string };
 function isSystemCallError(err: unknown): err is SystemCallError {
   return err instanceof Error && typeof (err as { syscall?: unknown }).syscall === "string";
 }
 
+// The system's reason, as its code and the call that returned it: the message repeats the path, which
+// the line that reports it has already named.
+function systemCallReason(err: SystemCallError): string {
+  return `${err.code ?? err.message} on ${err.syscall}`;
+}
+
+// A contract, golden or skip sentinel that is a directory, a FIFO or a device, which the harness does not read.
+class NotAFileError extends Error {}
+
+// The text of a contract, golden or skip sentinel, read only when it is a file: opening a FIFO waits for
+// a program to write to it, so a golden that was one held the run, and reading a directory fails with
+// EISDIR, which a contract and a skip sentinel threw out of the run. Its type is looked up first, which
+// does not open it. Throws a NotAFileError for anything but a file, and the system's error for a path
+// it cannot look up (a symbolic link that dangles or loops) or a file it cannot open or read.
+function readTextFile(path: string): string {
+  const stats = statSync(path);
+  if (!stats.isFile()) {
+    throw new NotAFileError(stats.isDirectory() ? "a directory" : stats.isFIFO() ? "a FIFO" : "a device or socket");
+  }
+  return readFileSync(path, "utf8");
+}
+
+// Why a contract, golden or skip sentinel was not read: it is not a file, or the system would not open or read it.
+type UnreadFileError = NotAFileError | SystemCallError;
+function isUnreadFileError(err: unknown): err is UnreadFileError {
+  return err instanceof NotAFileError || isSystemCallError(err);
+}
+
+// The end of the line that reports one, after the file's name and path.
+function unreadFileReason(err: UnreadFileError): string {
+  return err instanceof NotAFileError ? `is ${err.message}, not a file` : `could not be read (${systemCallReason(err)})`;
+}
+
+// Whether a path names an entry, a symbolic link that dangles or loops included: runFixture asks this of
+// a golden. existsSync follows the link and reads such a golden as missing, so it was reported missing
+// after its CLI had run instead of failing its leg as a golden that cannot be read does.
+function hasEntry(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// How runFixture reads a participant's golden. A unit test passes its own, since the RangeError a golden
+// over the size limit throws cannot be produced with a committed fixture.
+export type GoldenReader = (goldenPath: string) => unknown;
+const readGoldenFile: GoldenReader = (goldenPath) => JSON.parse(readTextFile(goldenPath));
+
 // Why a participant's golden could not be read: a size limit (a RangeError), JSON that does not parse
-// (a SyntaxError) or a file the operating system would not open or read.
-type UnreadGoldenError = RangeError | SyntaxError | SystemCallError;
+// (a SyntaxError), or a path that is not a file or that the operating system would not open or read.
+type UnreadGoldenError = RangeError | SyntaxError | UnreadFileError;
 
 // The line for a leg whose golden could not be read. A golden that is not valid JSON is named with its
-// path and the parser's reason, and one the operating system would not open or read with its path and
-// the system's reason; a RangeError is a size limit, reported as a comparison that hit one is.
+// path and the parser's reason, one that is not a file with its path and what it is, and one the
+// operating system would not open or read with its path and the system's reason; a RangeError is a
+// size limit, reported as a comparison that hit one is.
 function unreadGoldenReport(label: string, goldenPath: string, err: UnreadGoldenError): string {
   if (err instanceof SyntaxError) return `[FAIL] ${label}: the golden at ${goldenPath} is not valid JSON (SyntaxError: ${err.message})`;
   if (err instanceof RangeError) return comparisonFailureReport(label, err);
-  return `[FAIL] ${label}: the golden at ${goldenPath} could not be read (${err.message})`;
+  return `[FAIL] ${label}: the golden at ${goldenPath} ${unreadFileReason(err)}`;
 }
 
 // A participant's command as its fixture runs it: every {BIN} stands for the command that runs the CLI
@@ -645,8 +780,15 @@ export function runFixture(
   // The parser throws on a syntax error, a second document, a repeated key and an alias to an anchor
   // that is not set. That fails this fixture, as a contract of the wrong type does, instead of
   // stopping the run before the remaining fixtures. The first line of the error names the place; the
-  // lines after it quote the file.
-  const contractText = readFileSync(contractPath, "utf8");
+  // lines after it quote the file. A contract.yaml that is not a file or cannot be opened fails it too.
+  let contractText: string;
+  try {
+    contractText = readTextFile(contractPath);
+  } catch (err) {
+    if (!isUnreadFileError(err)) throw err;
+    console.error(`[${fixtureName}] contract.yaml ${unreadFileReason(err)}`);
+    return 2;
+  }
   let parsedContract: unknown;
   try {
     parsedContract = parseYaml(contractText);
@@ -691,25 +833,24 @@ export function runFixture(
     return 2;
   }
 
-  mkdirSync(join(dirs.actual, fixtureName), { recursive: true });
-
   const results: Record<string, ProbeResult> = {};
   let failures = 0;
 
   // Each participant's golden, read once: the probe, the shape check and the comparison all use it. A
   // golden that cannot be read fails that participant's leg below instead of the harness: one over a
-  // size limit (a RangeError), one that is not valid JSON (a SyntaxError), and one the operating system
-  // would not open or read, such as a directory or a file without read permission. Each stopped the run
-  // before the remaining legs and fixtures ran.
+  // size limit (a RangeError), one that is not valid JSON (a SyntaxError), one that is not a file (a
+  // directory or a FIFO) and one the operating system would not open, such as a file without read
+  // permission or a symbolic link that dangles or loops. Each stopped the run before the remaining legs
+  // and fixtures ran, or, for a FIFO, did not let it finish.
   const goldens = new Map<CLI, unknown>();
   const unreadGoldens = new Map<CLI, UnreadGoldenError>();
   for (const cli of contract.participants) {
     const goldenPath = join(expectedDir, `${cli}.json`);
-    if (!existsSync(goldenPath)) continue;
+    if (!hasEntry(goldenPath)) continue;
     try {
       goldens.set(cli, readGolden(goldenPath));
     } catch (err) {
-      if (!(err instanceof RangeError || err instanceof SyntaxError || isSystemCallError(err))) throw err;
+      if (!(err instanceof RangeError || err instanceof SyntaxError || isUnreadFileError(err))) throw err;
       unreadGoldens.set(cli, err);
     }
   }
@@ -764,7 +905,18 @@ export function runFixture(
       const parsedVal = applyIntentionalDrift(parsed, cli);
 
       const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
-      writeFileSync(actualPath, stableStringify(parsedVal));
+      const capture = stableStringify(parsedVal);
+      // A capture that cannot be written, such as one whose path is a directory, fails its leg instead of
+      // stopping the run; the catch below rethrows any error but a RangeError.
+      try {
+        mkdirSync(dirname(actualPath), { recursive: true });
+        writeFileSync(actualPath, capture);
+      } catch (err) {
+        if (!isSystemCallError(err)) throw err;
+        console.error(`\n[FAIL] ${fixtureName} × ${cli}: the capture could not be written at ${actualPath} (${systemCallReason(err)})`);
+        failures++;
+        continue;
+      }
 
       const absent = absentMustMatchKeys(parsedVal, mustMatch, shapeGolden);
       if (absent.length > 0) {
@@ -795,7 +947,7 @@ export function runFixture(
   const legs: { cli: CLI; golden: unknown; actual?: unknown }[] = [];
   for (const cli of contract.participants) {
     const goldenPath = join(expectedDir, `${cli}.json`);
-    if (!existsSync(goldenPath)) {
+    if (!hasEntry(goldenPath)) {
       console.error(`[${fixtureName}] ${cli} missing golden at ${goldenPath}`);
       failures++;
       continue;
@@ -875,7 +1027,17 @@ export function runFixture(
   for (const cli of allCLIs) {
     if (contract.participants.includes(cli)) continue;
     const skipPath = join(expectedDir, `${cli}.skip`);
-    const skipReason = existsSync(skipPath) ? readFileSync(skipPath, "utf8").trim() : null;
+    // A sentinel that is not a file or cannot be opened fails the fixture, as an empty one does, instead of stopping the run.
+    let skipReason: string | null = null;
+    try {
+      if (existsSync(skipPath)) skipReason = readTextFile(skipPath).trim();
+    } catch (err) {
+      if (!isUnreadFileError(err)) throw err;
+      console.error(`\n[FAIL] ${fixtureName} × ${cli}: the skip sentinel at ${skipPath} ${unreadFileReason(err)}`);
+      console.error(`  Make expected/${cli}.skip a file that says why ${cli} does not exercise this fixture (README.md "Contract model").`);
+      failures++;
+      continue;
+    }
     if (skipReason) {
       console.log(`[SKIP] ${fixtureName} × ${cli}: ${skipReason}`);
     } else if (skipReason === "") {
