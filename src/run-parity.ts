@@ -775,8 +775,11 @@ export function runFixture(
       console.error(`  Intended output change? Re-baseline golden-first: README.md "Re-baselining goldens".`);
       failures += diffs.length;
     } else {
-      // A key in no golden is named as such on every leg's line, the keyless one's included, so the
-      // keys called "not in its golden" are only those another golden carries.
+      // Where every golden was read, a key in no golden is named as such on every leg's line, the
+      // keyless one's included, so the keys called "not in its golden" are only those another golden
+      // carries. Where a golden could not be read, no key is called "in no golden", since that golden
+      // may carry it: the keyless leg's line then calls every must-match key "not in its golden",
+      // including one that no golden that was read carries.
       const keylessGolden = keyless.includes(cli);
       const uncompared = [
         ...(keylessGolden ? [`${mustMatch.join(", ")} (not in its golden)`] : []),
