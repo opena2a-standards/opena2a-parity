@@ -70,10 +70,16 @@ export function shellWords(script: string): string[] {
   return words;
 }
 
-// The arguments the `typecheck` script gives the compiler, so the script and these tests run one check.
-function scriptArgs(): string[] {
+// The `typecheck` script package.json carries, or an empty one when it carries none.
+function typecheckScript(): string {
   const { scripts } = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as { scripts?: Record<string, string> };
-  const [command, ...args] = shellWords(scripts?.typecheck ?? "");
+  return scripts?.typecheck ?? "";
+}
+
+// The arguments the `typecheck` script gives the compiler, so the script and these tests run one
+// check. A test passes `script` in to read a script package.json does not carry.
+export function scriptArgs(script: string = typecheckScript()): string[] {
+  const [command, ...args] = shellWords(script);
   assert.equal(command, "tsc", "package.json must keep a `typecheck` script that runs tsc");
   return args;
 }
@@ -144,6 +150,16 @@ test("the typecheck script reaches the compiler as the words the shell splits it
   ]) {
     assert.throws(() => shellWords(script), /give tsc its arguments as plain or quoted words/, script);
   }
+});
+
+test("a quoted argument of the typecheck script reaches the compiler without its quotes", () => {
+  // The committed script carries no quoted argument, so splitting it on spaces gives the same
+  // words and only a script passed in here tells the two apart.
+  assert.deepEqual(scriptArgs('tsc --project "tsconfig.json"'), ["--project", "tsconfig.json"]);
+  assert.deepEqual(scriptArgs("tsc --project 'my config.json' --pretty false"), ["--project", "my config.json", "--pretty", "false"]);
+  assert.deepEqual(scriptArgs("tsc --project my\\ config.json"), ["--project", "my config.json"]);
+  assert.deepEqual(scriptArgs('"tsc" --project tsconfig.json'), ["--project", "tsconfig.json"]);
+  assert.throws(() => scriptArgs(""), /must keep a `typecheck` script that runs tsc/);
 });
 
 test("the type check runs locally and in this repository, and skips for a consumer", () => {
