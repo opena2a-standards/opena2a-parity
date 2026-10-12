@@ -243,6 +243,77 @@ export function mayDifferProblems(contract: Pick<FixtureContract, "must_match" |
   return problems;
 }
 
+// The checks below cover the fields runFixture reads as the types FixtureContract gives them. A
+// contract that held another type there stopped the run with a TypeError ("contract.participants is
+// not iterable", "path.replace is not a function") before the remaining fixtures ran. One line per
+// offending field or entry, naming it; runFixture fails the fixture on any of them before it runs a CLI.
+export function exercisesProblems(contract: Pick<FixtureContract, "exercises">): string[] {
+  const exercises: unknown = contract.exercises;
+  if (exercises === null || typeof exercises !== "object" || Array.isArray(exercises)) {
+    return ["exercises is not a mapping from each participant to its command"];
+  }
+  // An entry left without a value is reported when the fixture runs, as a participant with no exercises entry.
+  return Object.entries(exercises).flatMap(([cli, command]) =>
+    command == null || typeof command === "string" ? [] : [`exercises entry ${cli} is not a command string: ${JSON.stringify(command)}`],
+  );
+}
+
+export function participantsProblems(contract: Pick<FixtureContract, "participants">): string[] {
+  const clis = Object.keys(BIN_VARS);
+  const entries: unknown = contract.participants;
+  if (!Array.isArray(entries)) return [`participants is not a list of CLIs (${clis.join(", ")})`];
+  return entries.flatMap((cli: unknown, i) =>
+    typeof cli === "string" && clis.includes(cli) ? [] : [`participants entry ${i + 1} is not one of ${clis.join(", ")}: ${JSON.stringify(cli)}`],
+  );
+}
+
+// A rule field that is missing or not a string. An empty replacement is a string: it deletes what the pattern matches.
+function ruleFieldProblems(name: string, field: string, value: unknown, emptyAllowed = false): string[] {
+  if (value == null || (value === "" && !emptyAllowed)) return [`${name} has no ${field}`];
+  return typeof value === "string" ? [] : [`${name} ${field} is not a string: ${JSON.stringify(value)}`];
+}
+
+export function normalizeProblems(contract: Pick<FixtureContract, "normalize">): string[] {
+  const rules: unknown = contract.normalize ?? [];
+  if (!Array.isArray(rules)) return ["normalize is not a list of rules"];
+  const problems: string[] = [];
+  rules.forEach((rule: unknown, i) => {
+    const name = `normalize rule ${i + 1}`;
+    if (rule === null || typeof rule !== "object" || Array.isArray(rule)) {
+      problems.push(`${name} is not a mapping with a kind: ${JSON.stringify(rule)}`);
+      return;
+    }
+    const { kind, path, pattern, replacement } = rule as Record<string, unknown>;
+    if (kind === "strip_key") {
+      problems.push(...ruleFieldProblems(`${name} (strip_key)`, "path", path));
+    } else if (kind === "replace_regex") {
+      const patternProblems = ruleFieldProblems(`${name} (replace_regex)`, "pattern", pattern);
+      if (patternProblems.length === 0) {
+        try {
+          // The input directory is inserted as a literal, so any literal stands for it here.
+          rulePattern(pattern as string, "input");
+        } catch (err) {
+          patternProblems.push(`${name} (replace_regex) pattern is not a regular expression: ${(err as Error).message}`);
+        }
+      }
+      problems.push(...patternProblems, ...ruleFieldProblems(`${name} (replace_regex)`, "replacement", replacement, true));
+    } else {
+      problems.push(
+        kind == null
+          ? `${name} has no kind; a rule is strip_key or replace_regex`
+          : `${name} kind is neither strip_key nor replace_regex: ${JSON.stringify(kind)}`,
+      );
+    }
+  });
+  return problems;
+}
+
+// A replace_regex pattern as normalize applies it: {FIXTURE_INPUT_DIR} stands for the fixture's input
+// directory, matched literally.
+function rulePattern(pattern: string, fixtureInputDir: string): RegExp {
+  return new RegExp(pattern.replace("{FIXTURE_INPUT_DIR}", fixtureInputDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "g");
+}
+
 function stripKey(obj: unknown, path: string): void {
   if (path === "" || path === "$") return;
   const parts = path.replace(/^\$\.?/, "").split(".").filter(Boolean);
@@ -276,8 +347,7 @@ function normalize(parsed: unknown, rules: FixtureContract["normalize"], fixture
     if (rule.kind === "strip_key" && rule.path) {
       stripKey(out, rule.path);
     } else if (rule.kind === "replace_regex" && rule.pattern != null && rule.replacement != null) {
-      const pattern = rule.pattern.replace("{FIXTURE_INPUT_DIR}", fixtureInputDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-      out = replaceInStrings(out, new RegExp(pattern, "g"), rule.replacement);
+      out = replaceInStrings(out, rulePattern(rule.pattern, fixtureInputDir), rule.replacement);
     }
   }
   return out;
@@ -484,7 +554,13 @@ export function runFixture(
     console.error(`[${fixtureName}] missing contract.yaml`);
     return 2;
   }
-  const contract = parseYaml(readFileSync(contractPath, "utf8")) as FixtureContract;
+  // An empty contract.yaml parses to null, and one holding a list or a bare value has no field to read.
+  const parsedContract: unknown = parseYaml(readFileSync(contractPath, "utf8"));
+  if (parsedContract === null || typeof parsedContract !== "object" || Array.isArray(parsedContract)) {
+    console.error(`[${fixtureName}] contract.yaml is not a mapping of contract fields (README.md "Contract model")`);
+    return 2;
+  }
+  const contract = parsedContract as FixtureContract;
   const kind: FixtureKind = contract.kind ?? "directory";
 
   if (kind === "directory" && !existsSync(inputDir)) {
@@ -495,7 +571,13 @@ export function runFixture(
     console.error(`[${fixtureName}] kind=package-name requires 'package:' field`);
     return 2;
   }
-  const contractProblems = [...mustMatchProblems(contract), ...mayDifferProblems(contract)];
+  const contractProblems = [
+    ...exercisesProblems(contract),
+    ...participantsProblems(contract),
+    ...mustMatchProblems(contract),
+    ...mayDifferProblems(contract),
+    ...normalizeProblems(contract),
+  ];
   if (contractProblems.length > 0) {
     for (const problem of contractProblems) console.error(`[${fixtureName}] contract.yaml ${problem}`);
     return 2;
