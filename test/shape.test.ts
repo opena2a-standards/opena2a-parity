@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFileSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { probeWithRetry, absentMustMatchKeys, shapeFailureReport, RETRY_CONDITION } from "../src/run-parity.ts";
+import { probeWithRetry, absentMustMatchKeys, shapeFailureReport, unresolvedMustMatchKeys, RETRY_CONDITION } from "../src/run-parity.ts";
 
 // A participant that exits 0 with a well-formed JSON document that simply does not carry the
 // contract's must-match keys is the third shape the harness meets, after "transient error payload"
@@ -43,6 +43,23 @@ test("a key the participant's golden also omits is absence on both sides, not a 
   assert.deepEqual(absentMustMatchKeys(scanDoc, MUST_MATCH, aiTrustGolden), MUST_MATCH);
   // and without a golden every absent key counts, as before
   assert.deepEqual(absentMustMatchKeys(aiTrustActual, withScanStatus), ["scanStatus"]);
+});
+
+test("unresolvedMustMatchKeys names the keys no participant's golden carries", () => {
+  // a key in bracket form or a misspelt one resolves in no golden; the dot form with a numeric
+  // segment for the array index does
+  const golden = { score: 98, findings: [{ checkId: "GIT-001" }] };
+  const keys = ["score", "$.score", "findings[0].checkId", "scroe", "findings.0.checkId"];
+  assert.deepEqual(unresolvedMustMatchKeys(keys, [golden]), ["findings[0].checkId", "scroe"]);
+  // one golden carrying the key is enough: scanStatus is in hma's golden and omitted from ai-trust's
+  const aiTrustGolden = { verdict: "passed" };
+  const hmaGolden = { verdict: "passed", scanStatus: "warnings" };
+  assert.deepEqual(unresolvedMustMatchKeys(["verdict", "scanStatus"], [aiTrustGolden, hmaGolden]), []);
+  assert.deepEqual(unresolvedMustMatchKeys(["verdict", "scanStatus"], [aiTrustGolden]), ["scanStatus"]);
+  // a key holding null is carried
+  assert.deepEqual(unresolvedMustMatchKeys(["trustLevel"], [{ trustLevel: null }]), []);
+  // with no golden yet there is nothing to resolve against; the missing golden is reported on its own
+  assert.deepEqual(unresolvedMustMatchKeys(["score"], []), []);
 });
 
 test("a must-match path segment that names an inherited property is absent unless the payload carries it", () => {

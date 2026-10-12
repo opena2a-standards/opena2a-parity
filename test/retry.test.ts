@@ -151,6 +151,12 @@ process.exit(2);
   }
 });
 
+// The stub fixtures below have hma as their only participant; the harness fails a fixture that leaves
+// a CLI out without a sentinel, so opena2a and ai-trust each get one.
+function writeSkipSentinels(fixture: string): void {
+  for (const cli of ["opena2a", "ai-trust"]) writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+}
+
 test("runFixture hands the participant's golden to the probe, so an expected not-found is compared on the first attempt", () => {
   const dir = mkdtempSync(join(tmpdir(), "parity-fixture-"));
   const fixtures = join(dir, "fixtures");
@@ -173,6 +179,7 @@ must_match:
 may_differ: []
 `);
   writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify(NOT_FOUND_GOLDEN));
+  writeSkipSentinels(fixture);
   const counter = join(dir, "n");
   const bin = join(dir, "notfound.mjs");
   writeFileSync(counter, "0");
@@ -210,18 +217,27 @@ process.exit(1);
 // counts its invocations and always prints `payload` with `exit`. Returns the fixture's result, the
 // invocation count, every line the harness printed and the capture it wrote (undefined if none).
 // `encode` turns the golden and the payload into JSON text; `String` hands over text as it is.
+// `peer`, for a contract that also lists opena2a, is that participant's golden and the payload its
+// stub prints with exit 0.
 function runStubFixture(
   contract: string,
   golden: unknown,
   payload: unknown,
   exit = 1,
   encode: (value: unknown) => string = (value) => JSON.stringify(value),
+  peer?: { golden: unknown; payload: unknown },
 ): { rc: number; invocations: number; logged: string[]; capture: string | undefined } {
   const dir = mkdtempSync(join(tmpdir(), "parity-stub-fixture-"));
   const fixture = join(dir, "fixtures", "stub");
   mkdirSync(join(fixture, "expected"), { recursive: true });
   writeFileSync(join(fixture, "contract.yaml"), contract);
   writeFileSync(join(fixture, "expected", "hma.json"), encode(golden));
+  writeSkipSentinels(fixture);
+  const peerBin = join(dir, "peer.mjs");
+  if (peer) {
+    writeFileSync(join(fixture, "expected", "opena2a.json"), encode(peer.golden));
+    writeFileSync(peerBin, `console.log(${JSON.stringify(encode(peer.payload))});`);
+  }
   const counter = join(dir, "n");
   const bin = join(dir, "stub.mjs");
   writeFileSync(counter, "0");
@@ -239,7 +255,7 @@ process.exitCode = ${exit};
   console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
   try {
-    const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
+    const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: peer ? `node ${peerBin}` : "unused", "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
     const capturePath = join(dir, "actual", "stub", "hma.json");
     const capture = existsSync(capturePath) ? readFileSync(capturePath, "utf8") : undefined;
     return { rc, invocations: Number(readFileSync(counter, "utf8")), logged, capture };
@@ -278,6 +294,22 @@ test("runFixture fails the leg when a reworded error still differs from the gold
   assert.equal(r.rc, 1);
   assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma") && l.includes('No package named \\"ghost\\" on npm.')), r.logged.join("\n"));
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
+});
+
+test("README.md states the number of times an unexpected error is run, as the harness runs it", () => {
+  // "tried up to N times" is N runs; "retried up to N times" is the first run plus N retries
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+  const claim = readme.match(/An error the golden does not record is (tried|retried) up to (\w+) times/);
+  assert.ok(claim, "README.md no longer states how often an unexpected error is run");
+  const words: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  const n = words[claim[2]] ?? Number(claim[2]);
+  const promisedRuns = claim[1] === "tried" ? n : n + 1;
+  const reworded = { ...NOT_FOUND_GOLDEN, error: 'No package named "ghost" on npm.' };
+  const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, reworded);
+  assert.equal(r.invocations, promisedRuns, `README.md says "${claim[0]}"`);
+  // a retry count in parentheses, if given, is the runs after the first
+  const retries = readme.match(/An error the golden does not record is tried up to \w+ times \((\w+) retr(?:y|ies)\)/);
+  if (retries) assert.equal(words[retries[1]] ?? Number(retries[1]), r.invocations - 1, retries[0]);
 });
 
 test("the unexpected-error report offers re-baselining as a conditional, not a verdict that the error is intended", () => {
@@ -323,6 +355,51 @@ test("runFixture fails a not-found leg on a registry timeout that carries every 
   assert.equal(r.rc, 1);
   assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma") && l.includes("Registry request timed out after 10000ms")), r.logged.join("\n"));
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
+});
+
+test("runFixture reports hackmyagent's unreachable-registry payload, which carries no ecosystem, as a SHAPE failure", () => {
+  // the keys hackmyagent 0.33.2 emits for `check --no-scan --json` when the registry is not reached
+  const unreachable = {
+    hackmyagentVersion: "0.33.2",
+    name: "ghost",
+    source: "registry",
+    found: false,
+    error: 'Registry query for "ghost" failed: Registry network error: fetch failed',
+    errorClass: "registry-unreachable",
+    coverage: { measured: false, examined: 0, total: 0, unit: "unit", reason: "target-unreachable" },
+  };
+  const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, unreachable, 2);
+  assert.equal(r.invocations, 3);
+  assert.equal(r.rc, 1);
+  const shape = r.logged.find((l) => l.includes("[SHAPE] stub × hma"));
+  assert.ok(shape, r.logged.join("\n"));
+  assert.match(shape, /1 of 3 must-match key\(s\) ABSENT from the payload: ecosystem\n/);
+  assert.match(shape, /operational error payload after 3 attempts \(error: Registry query for "ghost" failed/);
+  // the leg fails on its shape, so the error comparison is never reached
+  assert.ok(!r.logged.some((l) => l.includes("[FAIL] stub × hma")), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
+});
+
+test("README.md and the retry comment name the CLI whose registry timeout carries the not-found keys, and the one whose does not", () => {
+  const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  const docs = [
+    ["README.md", read("README.md").replace(/\s+/g, " ")],
+    ["src/run-parity.ts", read("src/run-parity.ts").replace(/\n\s*\/\/ ?/g, " ").replace(/\s+/g, " ")],
+  ] as const;
+  for (const [path, text] of docs) {
+    const sentences = text.split(/(?<=\.)\s+/).filter((s) => /\bcarr(?:y|ies)\b/.test(s) && /\becosystem\b/.test(s));
+    assert.ok(sentences.length >= 2, `${path}: ${sentences.join(" | ")}`);
+    // not every CLI's timeout payload looks like a not-found, so each sentence says whose it describes
+    for (const s of sentences) assert.match(s, /\b(?:ai-trust|hackmyagent)'s\b/, `${path}: ${s}`);
+    assert.ok(
+      sentences.some((s) => /\bai-trust's\b/.test(s) && !/\bno `?ecosystem\b/.test(s)),
+      `${path}: no sentence says ai-trust's timeout carries ecosystem`,
+    );
+    assert.ok(
+      sentences.some((s) => /\bhackmyagent's\b/.test(s) && /\bno `?ecosystem\b/.test(s) && /\bSHAPE\b/.test(s)),
+      `${path}: no sentence says hackmyagent's unreachable-registry payload omits ecosystem and fails as SHAPE`,
+    );
+  }
 });
 
 // A golden may record a structured error; an equal object is the same error, not a reworded one.
@@ -563,15 +640,18 @@ test("runFixture decides whether an error is expected on the normalized payload 
 });
 
 test("runFixture hands the golden to the shape check, so a must-match key the golden also omits is not a SHAPE failure", () => {
-  // check-registered-ai's ai-trust leg: scanStatus is a must-match key its golden omits on purpose
+  // check-registered-ai: scanStatus is a must-match key ai-trust's golden omits on purpose and the
+  // opena2a golden carries. The stub's hma leg plays ai-trust's part.
   const contract = `
 description: registered stub
 kind: package-name
 package: "@scope/server"
 exercises:
   hma: "{BIN} check {PACKAGE} --no-scan --json"
+  opena2a: "{BIN} check {PACKAGE} --format json"
 participants:
   - hma
+  - opena2a
 must_match:
   - trustLevel
   - name
@@ -581,9 +661,54 @@ must_match:
 may_differ: []
 `;
   const golden = { name: "@scope/server", found: true, trustLevel: 3, verdict: "passed", packageType: "mcp_server" };
-  const r = runStubFixture(contract, golden, { ...golden, source: "registry" }, 0);
+  const peerGolden = { ...golden, scanStatus: "warnings" };
+  const r = runStubFixture(contract, golden, { ...golden, source: "registry" }, 0, undefined, { golden: peerGolden, payload: peerGolden });
   assert.equal(r.invocations, 1);
-  assert.ok(!r.logged.some((l) => l.includes("[SHAPE]")), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.includes("[SHAPE]") || l.includes("[CONTRACT]")), r.logged.join("\n"));
   assert.equal(r.rc, 0);
   assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × hma: 5 must-match fields")), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × opena2a: 5 must-match fields")), r.logged.join("\n"));
+});
+
+// The contract from the issue: one key in JSONPath bracket form, one misspelt. Each resolves to
+// nothing in the golden and the payload alike, so both were counted equal and the leg passed.
+const UNRESOLVED_KEY_GOLDEN = { score: 98, findings: [{ checkId: "GIT-001" }] };
+const UNRESOLVED_KEY_PAYLOAD = { score: 12, findings: [{ checkId: "CRED-001" }] };
+const contractWithKeys = (keys: string[]) => `
+description: must-match key syntax stub
+kind: package-name
+package: x
+exercises:
+  hma: "{BIN}"
+participants:
+  - hma
+must_match: ${JSON.stringify(keys)}
+may_differ: []
+`;
+
+test("runFixture fails a fixture whose must-match key resolves in no participant's golden, instead of counting it equal", () => {
+  const r = runStubFixture(contractWithKeys(["findings[0].checkId", "scroe"]), UNRESOLVED_KEY_GOLDEN, UNRESOLVED_KEY_PAYLOAD, 0);
+  assert.equal(r.rc, 1);
+  assert.ok(
+    r.logged.some((l) => l.includes("[CONTRACT] stub: 2 must-match key(s) resolve in no participant's golden: findings[0].checkId, scroe")),
+    r.logged.join("\n"),
+  );
+  assert.ok(r.logged.some((l) => l.includes("findings.0.checkId")), "the report names the key syntax that resolves");
+  // neither key is counted among the fields that compared equal, and the leg's line says so
+  assert.ok(!r.logged.some((l) => /[12] must-match fields equal/.test(l)), r.logged.join("\n"));
+  assert.ok(
+    r.logged.some((l) => l.startsWith("[OK]   stub × hma: 0 must-match fields") && l.endsWith("not compared: findings[0].checkId, scroe (in no golden)")),
+    r.logged.join("\n"),
+  );
+  // the leg still runs, so the capture a re-baseline reads is written
+  assert.equal(r.invocations, 1);
+  assert.ok(r.capture !== undefined);
+});
+
+test("runFixture compares a must-match key that indexes an array with a numeric segment", () => {
+  const r = runStubFixture(contractWithKeys(["findings.0.checkId"]), UNRESOLVED_KEY_GOLDEN, UNRESOLVED_KEY_PAYLOAD, 0);
+  assert.equal(r.rc, 1);
+  assert.ok(!r.logged.some((l) => l.includes("[CONTRACT]")), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes("[FAIL] stub × hma: 1 must-match field(s) drifted")), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes('expected: "GIT-001"') && l.includes('actual:   "CRED-001"')), r.logged.join("\n"));
 });

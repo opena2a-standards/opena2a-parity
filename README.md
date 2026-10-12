@@ -4,7 +4,7 @@ Parity gate for the three OpenA2A CLIs: `hackmyagent`, `opena2a` and `ai-trust`.
 
 ## Why this exists
 
-The three CLIs overlap: `opena2a` passes `scan` and `check` through to `hackmyagent`, and scan, trust lookup and rendering are being moved into packages the three CLIs share, so that one change reaches all three. This repo provides the CI gate that proves identical output on identical input across the three CLIs. When a shared-package change lands in any CLI, this harness runs against every fixture and fails the PR if output drifts on a contract-tracked field.
+The three CLIs overlap: `opena2a` passes `scan` and `check` through to `hackmyagent`, and scan, trust lookup and rendering are being moved into packages the three CLIs share, so that one change reaches all three. This repo provides the CI gate that checks the three CLIs, given the same input, hold identical values on each fixture's contract-tracked fields: the keys its `contract.yaml` lists under `must_match`. Other keys, including the findings lists, may differ between the CLIs; `may_differ` names the ones known to differ and why. Comparing whole outputs needs an output schema the three CLIs share, which does not exist yet. When a shared-package change lands in any CLI, this harness runs against every fixture and reports a failing check on the PR if output drifts on a contract-tracked field. The PR is blocked from merging only where that CLI's repository lists `parity / parity` as a required status check on `main`; elsewhere the failing check is visible but does not stop the merge.
 
 ## Quickstart
 
@@ -37,19 +37,35 @@ fixtures/
 `contract.yaml` per fixture. Fields:
 
 - `exercises` — which CLI commands the fixture runs
-- `participants` — list of CLIs for which a golden exists (others are skipped with a sentinel file)
-- `must_match` — list of JSONPath-ish keys equal across participating CLIs apart from object key order
-- `may_differ` — list of keys per-CLI variation is allowed on (documented reason required)
+- `participants` — list of CLIs for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture
+- `must_match` — list of keys equal across participating CLIs apart from object key order. A key is
+  a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
+  `findings[0].checkId`). A key that resolves in no participant's golden fails the fixture, since it
+  would compare nothing
+- `may_differ` — list of `{ path, reason }` entries naming keys per-CLI variation is allowed on.
+  The harness fails the fixture before running any CLI if an entry has no `reason`, or if its
+  `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
 - `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs)
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 
+A `must_match` key is checked twice. Each CLI's output is compared with that CLI's own golden,
+and then the CLIs are compared with each other: the goldens of the participating CLIs, and their
+outputs, hold the same value for the key. A CLI whose golden omits a key is left out of that
+key's comparison between CLIs (ai-trust's `scanStatus` on `check-registered-ai`), and its output
+must omit the key too. A fixture whose goldens disagree on a `must_match` key fails even when
+every CLI matches its own golden. If the CLIs differ on purpose, the key belongs under
+`may_differ` with the reason.
+
 An `error` in a CLI's output is checked against that CLI's own golden, after normalization,
 even where the contract lists `error` under `may_differ` (which lets the wording differ between
-CLIs). An error the golden does not record is retried up to three times, and if it still differs
-after the last attempt the leg fails: on `check-not-found` a registry timeout carries the same
-`name`, `found` and `ecosystem` as a real not-found, so the error is what tells them apart. A CLI
-that rewords its error on purpose re-baselines its golden first, like any other intended output
+CLIs). An error the golden does not record is tried up to three times (two retries), and if it
+still differs after the last attempt the leg fails. On `check-not-found`, ai-trust's registry timeout carries
+the same `name`, `found` and `ecosystem` as a real not-found, so the error is what tells them
+apart. hackmyagent's payload for an unreachable registry (a timeout, a 5xx and a network error
+share one payload) carries `name` and `found: false` but no `ecosystem`, so its leg fails as a
+`[SHAPE]` failure naming the absent key instead of through the error comparison. A CLI that
+rewords its error on purpose re-baselines its golden first, like any other intended output
 change; if the rewording was not intended, it is a CLI regression and the golden stays as it is.
 
 ## Adding a fixture
@@ -81,6 +97,10 @@ golden landed here is live for them immediately — no pin bump.
    change — fix it there; do not re-baseline over it.
 3. Copy the verified capture over the golden:
    `cp actual/<fixture>/<cli>.json fixtures/<fixture>/expected/<cli>.json`
+   The harness also compares the goldens with each other, so a `must_match` field moved in one
+   CLI's golden alone fails the fixture for every consumer. Move it in the golden of every CLI
+   that carries it, or list the key under `may_differ` with the reason until the CLIs agree again.
+   `npm test` checks the committed goldens for this without the CLIs.
 4. Commit to `main` with a message naming the CLI change that motivated the
    re-baseline (e.g. the consumer PR number). This repo intentionally has no required
    checks on `main` so a golden lands in minutes, not hours.
@@ -92,7 +112,10 @@ red on parity until the golden lands. If a re-baseline ever costs more than a da
 record the measurement and reopen the ordering decision.
 
 A consumer's parity job also runs this repo's harness unit tests (`npm test`) from
-`main`, so a unit test that fails on `main` turns every consumer's parity leg red.
+`main` when its `uses:` pin is commit `e7a87e2` or later, the commit that added that step.
+A reusable workflow's steps come from the pinned commit, so a consumer pinned to an earlier
+commit runs no unit tests; bumping its pin turns them on. For a consumer pinned at or after
+`e7a87e2`, a unit test that fails on `main` turns its parity leg red.
 The three checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
 `GITHUB_REPOSITORY` names another repository, and the one that asks git about this repo's
 checkout also skips in a tree that is not its own git checkout; that file's three tests of its
@@ -116,7 +139,7 @@ real finding.
 
 ## Design decisions
 
-- Three CLIs that share packages, with this gate proving they agree. Merging them into a single CLI was the alternative considered; it is kept as the rollback.
+- Three CLIs that share packages, with this gate checking they agree on each fixture's contract-tracked fields. Merging them into a single CLI was the alternative considered; it is kept as the rollback.
 - The harness lives in its own public repository, not inside the `opena2a` monorepo and not inside a CLI. Each CLI keeps its own release cadence, and the CI of every CLI repository can check this one out.
 
 ## Status

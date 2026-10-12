@@ -76,11 +76,14 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
 // burning the retry budget and logging a real failure on a run that passes. A
 // different error on that fixture (a registry timeout) is still retried, and if
 // it still differs after the last attempt runFixture fails the leg whatever the
-// must-match keys say: a timeout payload there carries name, found: false and
-// ecosystem with the expected values, so the error is the only field that tells
-// "not found" from "not reached". A CLI that rewords that error on purpose
-// re-baselines its golden first, like any other intended output change; if the
-// rewording was not intended, it is a CLI regression and the golden stays as it is.
+// must-match keys say: ai-trust's timeout payload there carries name, found: false
+// and ecosystem with the expected values, so the error is the only field that
+// tells "not found" from "not reached". hackmyagent's unreachable-registry payload
+// (timeout, 5xx and network error alike) carries no ecosystem, so runFixture
+// reports that leg as a SHAPE failure before the error comparison is reached. A
+// CLI that rewords that error on purpose re-baselines its golden first, like any
+// other intended output change; if the rewording was not intended, it is a CLI
+// regression and the golden stays as it is.
 //
 // Goldens are copied from normalized captures, so the decision is made on the
 // normalized payload, never the raw one.
@@ -177,6 +180,37 @@ function getPath(obj: unknown, path: string): unknown {
     cur = (cur as Record<string, unknown>)[p];
   }
   return cur;
+}
+
+// A path as getPath reads it, so "$.score" and "score" name the same key.
+function canonicalPath(path: string): string {
+  return path.replace(/^\$\.?/, "").split(".").filter(Boolean).join(".");
+}
+
+// may_differ tells a reader which keys may vary between CLIs and why; the comparison reads only
+// must_match, so nothing else notices an entry without its reason, or a key listed under both lists
+// (which is still compared, whatever may_differ says). One line per offending entry, naming it;
+// runFixture fails the fixture on any of them before it runs a CLI.
+export function mayDifferProblems(contract: Pick<FixtureContract, "must_match" | "may_differ">): string[] {
+  const entries: unknown = contract.may_differ ?? [];
+  if (!Array.isArray(entries)) return ["may_differ is not a list of { path, reason } entries"];
+  const mustMatch = new Set((Array.isArray(contract.must_match) ? contract.must_match : []).map(String).map(canonicalPath));
+  const problems: string[] = [];
+  entries.forEach((entry: unknown, i) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      problems.push(`may_differ entry ${i + 1} is not a { path, reason } entry: ${JSON.stringify(entry)}`);
+      return;
+    }
+    const { path, reason } = entry as { path?: unknown; reason?: unknown };
+    const hasPath = typeof path === "string" && path.trim() !== "";
+    const name = `may_differ entry ${i + 1}${hasPath ? ` (path: ${path})` : ""}`;
+    if (!hasPath) problems.push(`${name} has no path`);
+    if (typeof reason !== "string" || reason.trim() === "") problems.push(`${name} has no reason; say why this key may differ between CLIs`);
+    if (hasPath && mustMatch.has(canonicalPath(path as string))) {
+      problems.push(`${name} is also listed under must_match, where it is still compared; list it under one of the two`);
+    }
+  });
+  return problems;
 }
 
 function stripKey(obj: unknown, path: string): void {
@@ -283,6 +317,25 @@ export function shapeFailureReport(label: string, exitCode: number, absent: stri
   return `${head}\n  ${why}; not retried: the retry is ${RETRY_CONDITION}`;
 }
 
+// The contract keys no participant's golden carries. A key in another syntax (`findings[0].checkId`)
+// or a misspelt one resolves to nothing in the golden and the payload alike, the shape check reads
+// that as absence on both sides, and nothing equals nothing, so it was counted equal without being
+// compared. One golden carrying the key is enough: check-registered-ai's scanStatus is in the hma and
+// opena2a goldens and omitted from ai-trust's on purpose. With no golden yet there is nothing to
+// resolve a key against, and each missing golden is reported on its own.
+export function unresolvedMustMatchKeys(mustMatch: string[], goldens: unknown[]): string[] {
+  if (goldens.length === 0) return [];
+  return mustMatch.filter((key) => goldens.every((golden) => getPath(golden, key) === undefined));
+}
+
+export function unresolvedKeysReport(fixtureName: string, unresolved: string[]): string {
+  return [
+    `[CONTRACT] ${fixtureName}: ${unresolved.length} must-match key(s) resolve in no participant's golden: ${unresolved.join(", ")}`,
+    `  A key is a dot-separated path with a numeric segment for an array index (findings.0.checkId).`,
+    `  A key no golden carries compares nothing, so it fails the fixture instead of counting as equal.`,
+  ].join("\n");
+}
+
 function diffKey(actual: unknown, golden: unknown, path: string): string | null {
   const a = getPath(actual, path);
   const g = getPath(golden, path);
@@ -308,6 +361,33 @@ export function unexpectedErrorReport(label: string, exitCode: number, actual: u
     `  intended output change only if the CLI now reports it on purpose: if so, re-baseline golden-first`,
     `  (README.md "Re-baselining goldens"); if not, it is a CLI regression and the golden stays as it is.`,
   ].join("\n");
+}
+
+// The must-match keys on which two CLIs hold different values, one block per key. Each leg compares a
+// CLI with its own golden only, so the legs alone pass a fixture whose goldens record different values
+// for the same input, and re-baselining copies one CLI's capture over that CLI's golden without looking
+// at the others. Here the goldens are compared with each other, and so are the outputs.
+//
+// A CLI whose golden omits a key is left out of that key's comparison: the omission is that CLI's
+// recorded absence (ai-trust's `scanStatus` on check-registered-ai), and its own leg holds its output
+// to it. A leg that failed before its own comparison has no `actual` and takes part with its golden.
+export function crossCliDiffs(mustMatch: string[], legs: { cli: string; golden: unknown; actual?: unknown }[]): string[] {
+  const diffs: string[] = [];
+  for (const key of mustMatch) {
+    const carriers = legs.filter((leg) => getPath(leg.golden, key) !== undefined);
+    if (carriers.length < 2) continue;
+    const width = Math.max(...carriers.map((leg) => leg.cli.length)) + 1;
+    const sides: string[] = [];
+    for (const [title, side] of [["goldens", "golden"], ["outputs", "actual"]] as const) {
+      const held = carriers
+        .filter((leg) => getPath(leg[side], key) !== undefined)
+        .map((leg) => ({ cli: leg.cli, value: canonicalJson(getPath(leg[side], key)) }));
+      if (new Set(held.map((h) => h.value)).size < 2) continue;
+      sides.push(`    ${title}:`, ...held.map((h) => `      ${`${h.cli}:`.padEnd(width)} ${h.value}`));
+    }
+    if (sides.length > 0) diffs.push([`  at ${key}:`, ...sides].join("\n"));
+  }
+  return diffs;
 }
 
 // JSON.parse accepts a document nested deeper than the call stack allows, but the clone, the key sort
@@ -348,11 +428,40 @@ export function runFixture(
     console.error(`[${fixtureName}] kind=package-name requires 'package:' field`);
     return 2;
   }
+  const contractProblems = mayDifferProblems(contract);
+  if (contractProblems.length > 0) {
+    for (const problem of contractProblems) console.error(`[${fixtureName}] contract.yaml ${problem}`);
+    return 2;
+  }
 
   mkdirSync(join(dirs.actual, fixtureName), { recursive: true });
 
   const results: Record<string, ProbeResult> = {};
   let failures = 0;
+
+  // Each participant's golden, read once: the probe, the shape check and the comparison all use it. A
+  // RangeError reading one (a size limit) fails that participant's leg below instead of the harness.
+  const goldens = new Map<CLI, unknown>();
+  const unreadGoldens = new Map<CLI, RangeError>();
+  for (const cli of contract.participants) {
+    const goldenPath = join(expectedDir, `${cli}.json`);
+    if (!existsSync(goldenPath)) continue;
+    try {
+      goldens.set(cli, JSON.parse(readFileSync(goldenPath, "utf8")));
+    } catch (err) {
+      if (!(err instanceof RangeError)) throw err;
+      unreadGoldens.set(cli, err);
+    }
+  }
+
+  // The legs still run, so each capture is written, and compare only the keys a golden carries. A
+  // golden that could not be read may carry a key, so its fixture is not checked for them.
+  const unresolved = unreadGoldens.size > 0 ? [] : unresolvedMustMatchKeys(contract.must_match, [...goldens.values()]);
+  if (unresolved.length > 0) {
+    console.error(`\n${unresolvedKeysReport(fixtureName, unresolved)}`);
+    failures += unresolved.length;
+  }
+  const mustMatch = contract.must_match.filter((key) => !unresolved.includes(key));
 
   for (const cli of contract.participants) {
     const invocation = contract.exercises[cli];
@@ -373,8 +482,9 @@ export function runFixture(
     try {
       // The golden decides which error payloads are expected and which absences are shape failures;
       // a missing golden is reported below.
-      const shapeGoldenPath = join(expectedDir, `${cli}.json`);
-      const shapeGolden = existsSync(shapeGoldenPath) ? JSON.parse(readFileSync(shapeGoldenPath, "utf8")) : undefined;
+      const unreadGolden = unreadGoldens.get(cli);
+      if (unreadGolden) throw unreadGolden;
+      const shapeGolden = goldens.get(cli);
       // Normalized inside the probe, so the expected-error decision sees what the golden was copied from.
       const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], kind === "directory" ? inputDir : "");
       const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden, fixtureNormalize);
@@ -388,10 +498,10 @@ export function runFixture(
       const actualPath = join(dirs.actual, fixtureName, `${cli}.json`);
       writeFileSync(actualPath, stableStringify(parsedVal));
 
-      const absent = absentMustMatchKeys(parsedVal, contract.must_match, shapeGolden);
+      const absent = absentMustMatchKeys(parsedVal, mustMatch, shapeGolden);
       if (absent.length > 0) {
         const errorField = isTransientProbeFailure(parsedVal, shapeGolden) ? (parsedVal as { error?: unknown }).error : undefined;
-        console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, contract.must_match.length, errorField)}`);
+        console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, mustMatch.length, errorField)}`);
         console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
         failures += absent.length;
         continue; // no golden comparison for a document of the wrong shape; the keys are named above
@@ -414,6 +524,7 @@ export function runFixture(
     }
   }
 
+  const legs: { cli: CLI; golden: unknown; actual?: unknown }[] = [];
   for (const cli of contract.participants) {
     const goldenPath = join(expectedDir, `${cli}.json`);
     if (!existsSync(goldenPath)) {
@@ -421,13 +532,17 @@ export function runFixture(
       failures++;
       continue;
     }
-    const golden = JSON.parse(readFileSync(goldenPath, "utf8"));
+    if (unreadGoldens.has(cli)) continue; // its leg has already failed on it
+    const golden = goldens.get(cli);
     const actual = results[cli]?.parsed;
-    if (actual === undefined) continue;
+    if (actual === undefined) {
+      legs.push({ cli, golden });
+      continue;
+    }
 
     const diffs: string[] = [];
     try {
-      for (const key of contract.must_match) {
+      for (const key of mustMatch) {
         const d = diffKey(actual, golden, key);
         if (d) diffs.push(d);
       }
@@ -437,6 +552,7 @@ export function runFixture(
       failures++;
       continue;
     }
+    legs.push({ cli, golden, actual });
     if (diffs.length > 0) {
       console.error(`\n[FAIL] ${fixtureName} × ${cli}: ${diffs.length} must-match field(s) drifted`);
       for (const d of diffs) console.error(d);
@@ -444,16 +560,43 @@ export function runFixture(
       console.error(`  Intended output change? Re-baseline golden-first: README.md "Re-baselining goldens".`);
       failures += diffs.length;
     } else {
-      console.log(`[OK]   ${fixtureName} × ${cli}: ${contract.must_match.length} must-match fields equal apart from object key order`);
+      const notCompared = unresolved.length > 0 ? `; not compared: ${unresolved.join(", ")} (in no golden)` : "";
+      console.log(`[OK]   ${fixtureName} × ${cli}: ${mustMatch.length} must-match fields equal apart from object key order${notCompared}`);
     }
   }
 
+  // Every leg above compared a CLI with its own golden; this compares the CLIs with each other. The
+  // line that says they agree is printed only when every leg passed, so it never covers an output
+  // that was not compared.
+  try {
+    const crossDiffs = crossCliDiffs(contract.must_match, legs);
+    if (crossDiffs.length > 0) {
+      console.error(`\n[FAIL] ${fixtureName}: ${crossDiffs.length} must-match field(s) differ between CLIs`);
+      for (const d of crossDiffs) console.error(d);
+      console.error(`  A must-match field holds one value in every CLI whose golden carries it. Fix the CLI or the golden that is`);
+      console.error(`  wrong; if the CLIs differ on purpose, list the key under may_differ with the reason (README.md "Contract model").`);
+      failures += crossDiffs.length;
+    } else if (failures === 0 && legs.length > 1) {
+      console.log(`[OK]   ${fixtureName}: ${legs.map((leg) => leg.cli).join(", ")} agree on every must-match field their goldens carry`);
+    }
+  } catch (err) {
+    if (!(err instanceof RangeError)) throw err;
+    console.error(`\n${comparisonFailureReport(`${fixtureName} across CLIs`, err)}`);
+    failures++;
+  }
+
+  // A CLI that is not a participant needs a sentinel saying why it does not exercise the fixture.
+  // Without one, a fixture that leaves a CLI out by mistake would pass looking complete.
   const allCLIs: CLI[] = ["hma", "opena2a", "ai-trust"];
   for (const cli of allCLIs) {
     if (contract.participants.includes(cli)) continue;
     const skipPath = join(expectedDir, `${cli}.skip`);
     if (existsSync(skipPath)) {
       console.log(`[SKIP] ${fixtureName} × ${cli}: ${readFileSync(skipPath, "utf8").trim()}`);
+    } else {
+      console.error(`\n[FAIL] ${fixtureName} × ${cli}: not a participant and has no skip sentinel at ${skipPath}`);
+      console.error(`  List ${cli} under participants with a golden, or add expected/${cli}.skip saying why it does not exercise this fixture (README.md "Contract model").`);
+      failures++;
     }
   }
 
