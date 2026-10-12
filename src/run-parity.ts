@@ -306,6 +306,8 @@ function ruleFieldProblems(name: string, field: string, value: unknown, emptyAll
 // with an empty string is *) passed this check and threw when the first output was normalized. One
 // that is empty with that value ({FIXTURE_INPUT_DIR} alone with an empty string) passed as a pattern
 // that is not empty, and matched at every position of every string: "ab" became "<IN>a<IN>b<IN>".
+// So did one that is not empty with that value and matches the empty string ((?:{FIXTURE_INPUT_DIR})
+// with an empty string is (?:)), so a pattern that holds the placeholder is also run on an empty string.
 export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, fixtureInputDir: string): string[] {
   const rules: unknown = contract.normalize ?? [];
   if (!Array.isArray(rules)) return ["normalize is not a list of rules"];
@@ -322,18 +324,26 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, 
     } else if (kind === "replace_regex") {
       const patternProblems = ruleFieldProblems(`${name} (replace_regex)`, "pattern", pattern);
       if (patternProblems.length === 0) {
-        // Both lines say what the placeholder became: a pattern that is empty here is not written
-        // empty, and the error quotes the pattern as compiled.
-        const standingFor = (pattern as string).includes(INPUT_DIR_PLACEHOLDER)
+        // Each line says what the placeholder became: a pattern that is empty here is not written
+        // empty, and the other two quote the pattern as compiled.
+        const holdsPlaceholder = (pattern as string).includes(INPUT_DIR_PLACEHOLDER);
+        const standingFor = holdsPlaceholder
           ? ` with ${INPUT_DIR_PLACEHOLDER} standing for ${fixtureInputDir === "" ? "an empty string" : "the input directory"}`
           : "";
         if ((pattern as string).replaceAll(INPUT_DIR_PLACEHOLDER, () => fixtureInputDir) === "") {
           patternProblems.push(`${name} (replace_regex) pattern is empty${standingFor}, so it would match at every position of every string`);
         } else {
+          let compiled: RegExp | undefined;
           try {
-            rulePattern(pattern as string, fixtureInputDir);
+            compiled = rulePattern(pattern as string, fixtureInputDir);
           } catch (err) {
             patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
+          }
+          // A pattern written without the placeholder is left as its author wrote it: ^$ replaces a value that is an empty string.
+          if (compiled && holdsPlaceholder && compiled.test("")) {
+            patternProblems.push(
+              `${name} (replace_regex) pattern matches the empty string${standingFor}: ${compiled} would insert the replacement where it matched no text`,
+            );
           }
         }
       }
@@ -578,12 +588,25 @@ function comparisonFailureReport(label: string, err: RangeError): string {
 export type GoldenReader = (goldenPath: string) => unknown;
 const readGoldenFile: GoldenReader = (goldenPath) => JSON.parse(readFileSync(goldenPath, "utf8"));
 
+// An error the operating system returned for a call, such as reading a golden that is a directory
+// (EISDIR) or opening one the harness may not read (EACCES). Node names the call on each such error,
+// so a TypeError from a mistake in the harness is not taken for one.
+type SystemCallError = Error & { syscall: string };
+function isSystemCallError(err: unknown): err is SystemCallError {
+  return err instanceof Error && typeof (err as { syscall?: unknown }).syscall === "string";
+}
+
+// Why a participant's golden could not be read: a size limit (a RangeError), JSON that does not parse
+// (a SyntaxError) or a file the operating system would not open or read.
+type UnreadGoldenError = RangeError | SyntaxError | SystemCallError;
+
 // The line for a leg whose golden could not be read. A golden that is not valid JSON is named with its
-// path and the parser's reason; a RangeError is a size limit, reported as a comparison that hit one is.
-function unreadGoldenReport(label: string, goldenPath: string, err: RangeError | SyntaxError): string {
-  return err instanceof SyntaxError
-    ? `[FAIL] ${label}: the golden at ${goldenPath} is not valid JSON (SyntaxError: ${err.message})`
-    : comparisonFailureReport(label, err);
+// path and the parser's reason, and one the operating system would not open or read with its path and
+// the system's reason; a RangeError is a size limit, reported as a comparison that hit one is.
+function unreadGoldenReport(label: string, goldenPath: string, err: UnreadGoldenError): string {
+  if (err instanceof SyntaxError) return `[FAIL] ${label}: the golden at ${goldenPath} is not valid JSON (SyntaxError: ${err.message})`;
+  if (err instanceof RangeError) return comparisonFailureReport(label, err);
+  return `[FAIL] ${label}: the golden at ${goldenPath} could not be read (${err.message})`;
 }
 
 // A participant's command as its fixture runs it: every {BIN} stands for the command that runs the CLI
@@ -675,17 +698,18 @@ export function runFixture(
 
   // Each participant's golden, read once: the probe, the shape check and the comparison all use it. A
   // golden that cannot be read fails that participant's leg below instead of the harness: one over a
-  // size limit (a RangeError), and one that is not valid JSON (a SyntaxError), which stopped the run
+  // size limit (a RangeError), one that is not valid JSON (a SyntaxError), and one the operating system
+  // would not open or read, such as a directory or a file without read permission. Each stopped the run
   // before the remaining legs and fixtures ran.
   const goldens = new Map<CLI, unknown>();
-  const unreadGoldens = new Map<CLI, RangeError | SyntaxError>();
+  const unreadGoldens = new Map<CLI, UnreadGoldenError>();
   for (const cli of contract.participants) {
     const goldenPath = join(expectedDir, `${cli}.json`);
     if (!existsSync(goldenPath)) continue;
     try {
       goldens.set(cli, readGolden(goldenPath));
     } catch (err) {
-      if (!(err instanceof RangeError || err instanceof SyntaxError)) throw err;
+      if (!(err instanceof RangeError || err instanceof SyntaxError || isSystemCallError(err))) throw err;
       unreadGoldens.set(cli, err);
     }
   }
