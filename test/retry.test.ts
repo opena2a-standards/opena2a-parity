@@ -296,6 +296,22 @@ test("runFixture fails the leg when a reworded error still differs from the gold
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
 });
 
+test("README.md states the number of times an unexpected error is run, as the harness runs it", () => {
+  // "tried up to N times" is N runs; "retried up to N times" is the first run plus N retries
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+  const claim = readme.match(/An error the golden does not record is (tried|retried) up to (\w+) times/);
+  assert.ok(claim, "README.md no longer states how often an unexpected error is run");
+  const words: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  const n = words[claim[2]] ?? Number(claim[2]);
+  const promisedRuns = claim[1] === "tried" ? n : n + 1;
+  const reworded = { ...NOT_FOUND_GOLDEN, error: 'No package named "ghost" on npm.' };
+  const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, reworded);
+  assert.equal(r.invocations, promisedRuns, `README.md says "${claim[0]}"`);
+  // a retry count in parentheses, if given, is the runs after the first
+  const retries = readme.match(/An error the golden does not record is tried up to \w+ times \((\w+) retr(?:y|ies)\)/);
+  if (retries) assert.equal(words[retries[1]] ?? Number(retries[1]), r.invocations - 1, retries[0]);
+});
+
 test("the unexpected-error report offers re-baselining as a conditional, not a verdict that the error is intended", () => {
   // the golden records no error and the CLI prints one on every attempt: a regression reads the same way
   const report = unexpectedErrorReport("stub × hma", 1, { name: "ghost", found: true, error: "TypeError: x is undefined" }, { name: "ghost", found: true });
