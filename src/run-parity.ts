@@ -254,8 +254,11 @@ export function mayDifferProblems(contract: Pick<FixtureContract, "must_match" |
 //
 // kind decides whether the fixture has an input/ directory and what {FIXTURE_INPUT_DIR} stands for.
 // Any value other than package-name was run as a directory fixture without the input/ check and with
-// an empty string for the placeholder, and a package that is not a string threw when it was put in
-// place of {PACKAGE}. A package left without a value is reported by runFixture.
+// an empty string for the placeholder. In a kind: package-name fixture, a package that is not a string
+// was converted to text when it was put in place of {PACKAGE}, so a fixture with `package: 2048` or
+// `package: [ghost]` ran and could pass; one that cannot be converted, such as a mapping with a
+// toString key, threw. A directory fixture does not read package, so its type is not checked there.
+// A package left without a value is reported by runFixture.
 export function kindProblems(contract: Pick<FixtureContract, "kind" | "package">): string[] {
   const kind: unknown = contract.kind ?? "directory";
   if (kind !== "directory" && kind !== "package-name") return [`kind is neither directory nor package-name: ${formatEntry(kind)}`];
@@ -300,7 +303,9 @@ function ruleFieldProblems(name: string, field: string, value: unknown, emptyAll
 // fixtureInputDir is what the fixture puts in place of {FIXTURE_INPUT_DIR}: its input directory, or an
 // empty string for a kind: package-name fixture. A pattern is compiled with that value, as normalize
 // compiles it: one that is a regular expression only with another value there ({FIXTURE_INPUT_DIR}*
-// with an empty string is *) passed this check and threw when the first output was normalized.
+// with an empty string is *) passed this check and threw when the first output was normalized. One
+// that is empty with that value ({FIXTURE_INPUT_DIR} alone with an empty string) passed as a pattern
+// that is not empty, and matched at every position of every string: "ab" became "<IN>a<IN>b<IN>".
 export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, fixtureInputDir: string): string[] {
   const rules: unknown = contract.normalize ?? [];
   if (!Array.isArray(rules)) return ["normalize is not a list of rules"];
@@ -317,14 +322,19 @@ export function normalizeProblems(contract: Pick<FixtureContract, "normalize">, 
     } else if (kind === "replace_regex") {
       const patternProblems = ruleFieldProblems(`${name} (replace_regex)`, "pattern", pattern);
       if (patternProblems.length === 0) {
-        try {
-          rulePattern(pattern as string, fixtureInputDir);
-        } catch (err) {
-          // The error quotes the pattern as compiled, so the line says what the placeholder became.
-          const standingFor = (pattern as string).includes(INPUT_DIR_PLACEHOLDER)
-            ? ` with ${INPUT_DIR_PLACEHOLDER} standing for ${fixtureInputDir === "" ? "an empty string" : "the input directory"}`
-            : "";
-          patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
+        // Both lines say what the placeholder became: a pattern that is empty here is not written
+        // empty, and the error quotes the pattern as compiled.
+        const standingFor = (pattern as string).includes(INPUT_DIR_PLACEHOLDER)
+          ? ` with ${INPUT_DIR_PLACEHOLDER} standing for ${fixtureInputDir === "" ? "an empty string" : "the input directory"}`
+          : "";
+        if ((pattern as string).replaceAll(INPUT_DIR_PLACEHOLDER, () => fixtureInputDir) === "") {
+          patternProblems.push(`${name} (replace_regex) pattern is empty${standingFor}, so it would match at every position of every string`);
+        } else {
+          try {
+            rulePattern(pattern as string, fixtureInputDir);
+          } catch (err) {
+            patternProblems.push(`${name} (replace_regex) pattern is not a regular expression${standingFor}: ${(err as Error).message}`);
+          }
         }
       }
       problems.push(...patternProblems, ...ruleFieldProblems(`${name} (replace_regex)`, "replacement", replacement, true));
@@ -568,6 +578,25 @@ function comparisonFailureReport(label: string, err: RangeError): string {
 export type GoldenReader = (goldenPath: string) => unknown;
 const readGoldenFile: GoldenReader = (goldenPath) => JSON.parse(readFileSync(goldenPath, "utf8"));
 
+// The line for a leg whose golden could not be read. A golden that is not valid JSON is named with its
+// path and the parser's reason; a RangeError is a size limit, reported as a comparison that hit one is.
+function unreadGoldenReport(label: string, goldenPath: string, err: RangeError | SyntaxError): string {
+  return err instanceof SyntaxError
+    ? `[FAIL] ${label}: the golden at ${goldenPath} is not valid JSON (SyntaxError: ${err.message})`
+    : comparisonFailureReport(label, err);
+}
+
+// A participant's command as its fixture runs it: every {BIN} stands for the command that runs the CLI
+// and, in a kind: package-name fixture, every {PACKAGE} for the contract's package. A directory fixture
+// has no package, and {PACKAGE} in its command stays as written. Both values are put in by a function,
+// in one pass: given as replacement strings to one replace call each, they replaced only the first
+// placeholder, a $&, $` or $' in a value was expanded instead of inserted as it is, and a {PACKAGE} in
+// the CLI's own command was replaced too. Exported for a unit test, since the shell expands $` and $$
+// before a stub CLI sees its arguments.
+export function exerciseCommand(invocation: string, bin: string, packageName?: string): string {
+  return invocation.replaceAll(/\{BIN\}|\{PACKAGE\}/g, (placeholder) => (placeholder === "{BIN}" ? bin : (packageName ?? placeholder)));
+}
+
 // Exported, with the two roots overridable, so a unit test can drive one fixture end to end
 // against a stub CLI in a temporary directory instead of the repository's own fixtures/ and actual/.
 // Returns 0 for a fixture that passes, 1 for any failure found while running the fixture and 2 for a
@@ -645,16 +674,18 @@ export function runFixture(
   let failures = 0;
 
   // Each participant's golden, read once: the probe, the shape check and the comparison all use it. A
-  // RangeError reading one (a size limit) fails that participant's leg below instead of the harness.
+  // golden that cannot be read fails that participant's leg below instead of the harness: one over a
+  // size limit (a RangeError), and one that is not valid JSON (a SyntaxError), which stopped the run
+  // before the remaining legs and fixtures ran.
   const goldens = new Map<CLI, unknown>();
-  const unreadGoldens = new Map<CLI, RangeError>();
+  const unreadGoldens = new Map<CLI, RangeError | SyntaxError>();
   for (const cli of contract.participants) {
     const goldenPath = join(expectedDir, `${cli}.json`);
     if (!existsSync(goldenPath)) continue;
     try {
       goldens.set(cli, readGolden(goldenPath));
     } catch (err) {
-      if (!(err instanceof RangeError)) throw err;
+      if (!(err instanceof RangeError || err instanceof SyntaxError)) throw err;
       unreadGoldens.set(cli, err);
     }
   }
@@ -685,20 +716,18 @@ export function runFixture(
       failures++;
       continue;
     }
-    const bin = bins[cli];
-    let cmd = invocation.replace("{BIN}", bin);
-    let positionalArg: string | null;
-    if (kind === "package-name") {
-      cmd = cmd.replace("{PACKAGE}", contract.package!);
-      positionalArg = null;
-    } else {
-      positionalArg = inputDir;
+    // A golden that could not be read fails its leg here, without running the CLI.
+    const unreadGolden = unreadGoldens.get(cli);
+    if (unreadGolden) {
+      console.error(`\n${unreadGoldenReport(`${fixtureName} × ${cli}`, join(expectedDir, `${cli}.json`), unreadGolden)}`);
+      failures++;
+      continue;
     }
+    const cmd = exerciseCommand(invocation, bins[cli], kind === "package-name" ? contract.package : undefined);
+    const positionalArg = kind === "package-name" ? null : inputDir;
     try {
       // The golden decides which error payloads are expected and which absences are shape failures;
       // a missing golden is reported below.
-      const unreadGolden = unreadGoldens.get(cli);
-      if (unreadGolden) throw unreadGolden;
       const shapeGolden = goldens.get(cli);
       // Normalized inside the probe, so the expected-error decision sees what the golden was copied from.
       const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], fixtureInputDir);

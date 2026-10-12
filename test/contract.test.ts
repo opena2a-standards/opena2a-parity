@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import {
+  exerciseCommand,
   exercisesProblems,
   kindProblems,
   mayDifferProblems,
@@ -117,6 +118,26 @@ test("exercisesProblems names an exercises that is not a mapping, and each comma
   ]);
 });
 
+test("exerciseCommand replaces every {BIN} and {PACKAGE} in a command and puts each value in as it is", () => {
+  assert.equal(
+    exerciseCommand("{BIN} check {PACKAGE} || {BIN} info {PACKAGE}", "node cli.js", "ghost"),
+    "node cli.js check ghost || node cli.js info ghost",
+  );
+  // Each value was the replacement string of String.prototype.replace, which expands these. The shell
+  // expands $` and $$ before a stub CLI sees its arguments, so the command is read here instead.
+  for (const sequence of ["$&", "$`", "$'", "$$"]) {
+    assert.equal(
+      exerciseCommand("{BIN} check {PACKAGE}", `/opt/a${sequence}b/cli.js`, `name${sequence}d`),
+      `/opt/a${sequence}b/cli.js check name${sequence}d`,
+      sequence,
+    );
+  }
+  // a value that holds the other placeholder is not read again
+  assert.equal(exerciseCommand("{BIN} check {PACKAGE}", "/opt/{PACKAGE}/cli.js", "{BIN}"), "/opt/{PACKAGE}/cli.js check {BIN}");
+  // a directory fixture has no package, and {PACKAGE} in its command stays as written
+  assert.equal(exerciseCommand("{BIN} scan {PACKAGE}", "node cli.js"), "node cli.js scan {PACKAGE}");
+});
+
 test("participantsProblems names a participants that is not a list, and each entry that names no CLI", () => {
   assert.deepEqual(participantsProblems({ participants: ["hma", "opena2a", "ai-trust"] }), []);
   for (const participants of [undefined, null, "hma", { hma: true }]) {
@@ -147,15 +168,16 @@ test("kindProblems names a kind that is neither directory nor package-name, and 
 });
 
 test("normalizeProblems accepts the rules the committed contracts use, and no normalize list", () => {
+  const rules = (...lines: string[]) => parseYaml(["normalize:", ...lines].join("\n"));
+  const stripKey = "  - { kind: strip_key, path: timestamp }";
+  const inputDir = '  - { kind: replace_regex, pattern: "{FIXTURE_INPUT_DIR}", replacement: "<FIXTURE_INPUT_DIR>" }';
+  const digits = '  - { kind: replace_regex, pattern: "\\\\d+", replacement: "" }';
   for (const fixtureInputDir of ["", "/fixtures/stub/input"]) {
     assert.deepEqual(normalizeProblems({} as never, fixtureInputDir), []);
-    assert.deepEqual(normalizeProblems(parseYaml([
-      "normalize:",
-      "  - { kind: strip_key, path: timestamp }",
-      '  - { kind: replace_regex, pattern: "{FIXTURE_INPUT_DIR}", replacement: "<FIXTURE_INPUT_DIR>" }',
-      '  - { kind: replace_regex, pattern: "\\\\d+", replacement: "" }',
-    ].join("\n")), fixtureInputDir), []);
+    assert.deepEqual(normalizeProblems(rules(stripKey, digits), fixtureInputDir), []);
   }
+  // only the directory fixtures carry the rule that is {FIXTURE_INPUT_DIR} alone: without an input directory it is empty
+  assert.deepEqual(normalizeProblems(rules(stripKey, inputDir, digits), "/fixtures/stub/input"), []);
 });
 
 test("normalizeProblems names a normalize that is not a list, and each rule of the wrong type", () => {
@@ -409,7 +431,11 @@ test('README.md "Contract model" describes the load checks as the harness applie
   const section = (readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "").replace(/\s+/g, " ");
   assert.match(section, /every `\{FIXTURE_INPUT_DIR\}` stands for the fixture's input directory, matched literally/);
   assert.match(section, /A `contract\.yaml` that is not one valid YAML document .* fails the fixture before any CLI runs/);
-  assert.match(section, /Any other `kind`, and a `package` that is not a string, fail the fixture before any CLI runs/);
+  // The section said a package that is not a string fails any fixture; a directory fixture with one runs.
+  assert.match(
+    section,
+    /Any other `kind` fails the fixture before any CLI runs, and so does a `package` that is not a string in a `package-name` fixture; a `directory` fixture does not read `package`/,
+  );
   assert.match(section, /A list that names no CLI would run and compare nothing, and fails the fixture before any CLI runs, as does a CLI listed twice/);
   assert.doesNotMatch(section, /can still stop the run/);
 });
@@ -595,6 +621,22 @@ test("normalizeProblems compiles a pattern with what the fixture puts in place o
   ]);
 });
 
+test("normalizeProblems names a pattern that is empty with what the fixture puts in place of {FIXTURE_INPUT_DIR}", () => {
+  // In a kind: package-name fixture the pattern passed as one that is not empty and was compiled to an
+  // empty regular expression, which matches at every position of every string: "ab" became "<IN>a<IN>b<IN>".
+  const rule = (pattern: string) => parseYaml(`normalize: [{ kind: replace_regex, pattern: ${JSON.stringify(pattern)}, replacement: "<IN>" }]`);
+  const empty =
+    "normalize rule 1 (replace_regex) pattern is empty with {FIXTURE_INPUT_DIR} standing for an empty string, so it would match at every position of every string";
+  for (const pattern of ["{FIXTURE_INPUT_DIR}", "{FIXTURE_INPUT_DIR}{FIXTURE_INPUT_DIR}"]) {
+    assert.deepEqual(normalizeProblems(rule(pattern), ""), [empty], pattern);
+    assert.deepEqual(normalizeProblems(rule(pattern), "/fixtures/stub/input"), [], pattern);
+  }
+  // a pattern written empty is still a rule with no pattern
+  assert.deepEqual(normalizeProblems(rule(""), ""), ["normalize rule 1 (replace_regex) has no pattern"]);
+  // an input directory named as the replacement sequence that expands to nothing here is not an empty string
+  assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}"), "$`"), []);
+});
+
 // The contract of a passing kind: package-name stub fixture, with any of its fields replaced.
 function stubContract(fields: Partial<Record<"kind" | "exercises" | "participants" | "mustMatch" | "normalize", string>> = {}): string {
   return [
@@ -609,9 +651,12 @@ function stubContract(fields: Partial<Record<"kind" | "exercises" | "participant
 }
 
 // One fixture with the given contract.yaml, run on its own and then before a valid fixture, each on a
-// stub CLI that counts its runs. Every fixture carries an input/ directory, a golden for hma and a skip
-// sentinel for each CLI (a participant's sentinel is not read), so only the contract decides the result.
-function runBesideValidFixture(name: string, contractYaml: string) {
+// stub CLI that counts its runs and prints the arguments it was given beside its score. Every fixture
+// carries an input/ directory, a golden for hma and a skip sentinel for each CLI (a participant's
+// sentinel is not read), so only the contract decides the result, or `golden` where one is given: the
+// text of the fixture's own hma golden. `alone.args` is the arguments in the capture of the fixture's
+// own run, undefined where it wrote none.
+function runBesideValidFixture(name: string, contractYaml: string, golden = JSON.stringify({ score: 7 })) {
   const dir = mkdtempSync(join(tmpdir(), "parity-load-"));
   const counter = join(dir, "n");
   const bin = join(dir, "stub.mjs");
@@ -619,18 +664,18 @@ function runBesideValidFixture(name: string, contractYaml: string) {
   writeFileSync(bin, `
 import { readFileSync, writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(counter)}, String(Number(readFileSync(${JSON.stringify(counter)}, "utf8")) + 1));
-console.log(JSON.stringify({ score: 7 }));
+console.log(JSON.stringify({ score: 7, args: process.argv.slice(2) }));
 `);
-  const addFixture = (fixtureName: string, yaml: string) => {
+  const addFixture = (fixtureName: string, yaml: string, goldenText: string) => {
     const fixture = join(dir, "fixtures", fixtureName);
     mkdirSync(join(fixture, "expected"), { recursive: true });
     mkdirSync(join(fixture, "input"));
     writeFileSync(join(fixture, "contract.yaml"), yaml);
-    writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify({ score: 7 }));
+    writeFileSync(join(fixture, "expected", "hma.json"), goldenText);
     for (const cli of ["hma", "opena2a", "ai-trust"]) writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
   };
-  addFixture(name, contractYaml);
-  addFixture("valid", stubContract());
+  addFixture(name, contractYaml, golden);
+  addFixture("valid", stubContract(), JSON.stringify({ score: 7 }));
   const logged: string[] = [];
   const origError = console.error;
   const origLog = console.log;
@@ -640,7 +685,9 @@ console.log(JSON.stringify({ score: 7 }));
     const bins = { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" };
     const dirs = { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") };
     const rc = runFixture(name, bins, dirs);
-    const alone = { rc, logged: [...logged], runs: Number(readFileSync(counter, "utf8")) };
+    const capturePath = join(dirs.actual, name, "hma.json");
+    const args: unknown = existsSync(capturePath) ? JSON.parse(readFileSync(capturePath, "utf8")).args : undefined;
+    const alone = { rc, logged: [...logged], runs: Number(readFileSync(counter, "utf8")), args };
     logged.length = 0;
     const failed = runFixtures([name, "valid"], bins, dirs);
     return { alone, beside: { failed, logged: [...logged], runs: Number(readFileSync(counter, "utf8")) - alone.runs } };
@@ -652,8 +699,10 @@ console.log(JSON.stringify({ score: 7 }));
 }
 
 // Each contract below stopped the run with an error thrown out of runFixture, so no later fixture ran,
-// or passed its fixture with nothing run or nothing compared. `problem` is the line the load check
-// prints for it after `[<fixture>] contract.yaml `, or a pattern where the line holds a temporary path.
+// or passed its fixture, as its entry comment says: with nothing run or compared (a participants list
+// that names no CLI), or with hma run and `score` compared and found equal (`kind: dir`,
+// `participants: [hma, hma]` and a pattern of {FIXTURE_INPUT_DIR} alone). `problem` is the line the load
+// check prints for it after `[<fixture>] contract.yaml `, or a pattern where the line holds a temporary path.
 const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; problem: string | RegExp }[] = [
   {
     // TypeError: Cannot convert object to primitive value
@@ -683,6 +732,14 @@ const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; pro
     contract: stubContract({ kind: "kind: directory", normalize: 'normalize: [{ kind: replace_regex, pattern: "[a-{FIXTURE_INPUT_DIR}]", replacement: "" }]' }),
     problem:
       /^\[range-to-dir\] contract\.yaml normalize rule 1 \(replace_regex\) pattern is not a regular expression with \{FIXTURE_INPUT_DIR\} standing for the input directory: Invalid regular expression: .*: Range out of order in character class$/,
+  },
+  {
+    // ran hma with an empty regular expression, which matches at every position of every string, and returned 0
+    title: "a pattern that is empty with the empty string a kind: package-name fixture puts in place of {FIXTURE_INPUT_DIR}",
+    name: "only-no-dir",
+    contract: stubContract({ normalize: 'normalize: [{ kind: replace_regex, pattern: "{FIXTURE_INPUT_DIR}", replacement: "<IN>" }]' }),
+    problem:
+      "normalize rule 1 (replace_regex) pattern is empty with {FIXTURE_INPUT_DIR} standing for an empty string, so it would match at every position of every string",
   },
   {
     // YAMLParseError, as are the next two
@@ -756,3 +813,30 @@ for (const { title, name, contract, problem } of UNRUNNABLE_CONTRACTS) {
     assert.ok(beside.logged.some((line) => line.startsWith("[OK]   valid × hma:")), beside.logged.join("\n"));
   });
 }
+
+test("runFixture puts the package in place of every {PACKAGE} in a command, not only the first", () => {
+  // The second placeholder reached the CLI as the text {PACKAGE}, and the fixture passed.
+  const { alone } = runBesideValidFixture("two-packages", stubContract({ exercises: 'exercises: { hma: "{BIN} {PACKAGE} --peer {PACKAGE}" }' }));
+  assert.equal(alone.rc, 0, alone.logged.join("\n"));
+  assert.deepEqual(alone.args, ["ghost", "--peer", "ghost"]);
+});
+
+test("runFixture runs a directory fixture whose contract carries a package that is not a string", () => {
+  // Only a kind: package-name fixture reads package, so its type is checked there and nowhere else,
+  // which is what README.md "Contract model" says.
+  const { alone } = runBesideValidFixture("package-in-directory", stubContract({ kind: "kind: directory\npackage: 5" }));
+  assert.equal(alone.rc, 0, alone.logged.join("\n"));
+  assert.equal(alone.runs, 1, "the fixture ran its CLI once");
+});
+
+test("runFixtures fails the leg of a participant whose golden is not valid JSON, runs no CLI for it, and runs the next fixture", () => {
+  // The SyntaxError was thrown out of runFixture, so the run stopped before the valid fixture ran.
+  const { alone, beside } = runBesideValidFixture("open-golden", stubContract(), "{ score: 7,");
+  assert.equal(alone.rc, 1, alone.logged.join("\n"));
+  assert.deepEqual(alone.logged.slice(1), ["[SKIP] open-golden × opena2a: opena2a does not exercise this stub", "[SKIP] open-golden × ai-trust: ai-trust does not exercise this stub"]);
+  assert.match(alone.logged[0], /^\n\[FAIL\] open-golden × hma: the golden at .*hma\.json is not valid JSON \(SyntaxError: .+\)$/);
+  assert.equal(alone.runs, 0, "the fixture ran a CLI");
+  assert.equal(beside.failed, 1, beside.logged.join("\n"));
+  assert.equal(beside.runs, 1, "the valid fixture after it ran its CLI, and nothing else did");
+  assert.ok(beside.logged.some((line) => line.startsWith("[OK]   valid × hma:")), beside.logged.join("\n"));
+});
