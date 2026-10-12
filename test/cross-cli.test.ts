@@ -43,6 +43,10 @@ function runStubs(mustMatch: string[], legs: Record<string, { golden: string; pr
     writeFileSync(out, legs[cli].prints ?? legs[cli].golden);
     bins[cli as keyof typeof bins] = `cat ${out}`;
   }
+  // every CLI that is not a participant is covered by a sentinel, as the harness requires
+  for (const cli of Object.keys(bins).filter((name) => !clis.includes(name))) {
+    writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+  }
   const logged: string[] = [];
   const origError = console.error;
   const origLog = console.log;
@@ -167,7 +171,11 @@ test("runFixture names the CLIs' outputs when one drifts from goldens that agree
 test("runFixture prints no cross-CLI line for a single participant, and none that says the CLIs agree after a failed leg", () => {
   const one = runStubs(["score"], { hma: { golden: j({ score: 98 }) } });
   assert.equal(one.rc, 0, one.logged.join("\n"));
-  assert.deepEqual(one.logged, ["[OK]   stub × hma: 1 must-match fields equal apart from object key order"]);
+  assert.deepEqual(one.logged, [
+    "[OK]   stub × hma: 1 must-match fields equal apart from object key order",
+    "[SKIP] stub × opena2a: opena2a does not exercise this stub",
+    "[SKIP] stub × ai-trust: ai-trust does not exercise this stub",
+  ]);
   // hma prints no JSON, so its output was never compared with opena2a's
   const golden = j({ score: 98 });
   const failed = runStubs(["score"], { hma: { golden, prints: "not json" }, opena2a: { golden } });

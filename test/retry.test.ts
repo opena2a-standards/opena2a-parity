@@ -151,6 +151,12 @@ process.exit(2);
   }
 });
 
+// The stub fixtures below have hma as their only participant; the harness fails a fixture that leaves
+// a CLI out without a sentinel, so opena2a and ai-trust each get one.
+function writeSkipSentinels(fixture: string): void {
+  for (const cli of ["opena2a", "ai-trust"]) writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+}
+
 test("runFixture hands the participant's golden to the probe, so an expected not-found is compared on the first attempt", () => {
   const dir = mkdtempSync(join(tmpdir(), "parity-fixture-"));
   const fixtures = join(dir, "fixtures");
@@ -173,6 +179,7 @@ must_match:
 may_differ: []
 `);
   writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify(NOT_FOUND_GOLDEN));
+  writeSkipSentinels(fixture);
   const counter = join(dir, "n");
   const bin = join(dir, "notfound.mjs");
   writeFileSync(counter, "0");
@@ -222,6 +229,7 @@ function runStubFixture(
   mkdirSync(join(fixture, "expected"), { recursive: true });
   writeFileSync(join(fixture, "contract.yaml"), contract);
   writeFileSync(join(fixture, "expected", "hma.json"), encode(golden));
+  writeSkipSentinels(fixture);
   const counter = join(dir, "n");
   const bin = join(dir, "stub.mjs");
   writeFileSync(counter, "0");

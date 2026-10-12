@@ -500,12 +500,18 @@ export function runFixture(
     failures++;
   }
 
+  // A CLI that is not a participant needs a sentinel saying why it does not exercise the fixture.
+  // Without one, a fixture that leaves a CLI out by mistake would pass looking complete.
   const allCLIs: CLI[] = ["hma", "opena2a", "ai-trust"];
   for (const cli of allCLIs) {
     if (contract.participants.includes(cli)) continue;
     const skipPath = join(expectedDir, `${cli}.skip`);
     if (existsSync(skipPath)) {
       console.log(`[SKIP] ${fixtureName} × ${cli}: ${readFileSync(skipPath, "utf8").trim()}`);
+    } else {
+      console.error(`\n[FAIL] ${fixtureName} × ${cli}: not a participant and has no skip sentinel at ${skipPath}`);
+      console.error(`  List ${cli} under participants with a golden, or add expected/${cli}.skip saying why it does not exercise this fixture (README.md "Contract model").`);
+      failures++;
     }
   }
 

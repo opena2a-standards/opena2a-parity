@@ -37,7 +37,7 @@ fixtures/
 `contract.yaml` per fixture. Fields:
 
 - `exercises` — which CLI commands the fixture runs
-- `participants` — list of CLIs for which a golden exists (others are skipped with a sentinel file)
+- `participants` — list of CLIs for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture
 - `must_match` — list of JSONPath-ish keys equal across participating CLIs apart from object key order
 - `may_differ` — list of keys per-CLI variation is allowed on (documented reason required)
 - `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs)
