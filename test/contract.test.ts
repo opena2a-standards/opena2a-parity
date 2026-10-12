@@ -44,6 +44,17 @@ test("mustMatchProblems names each entry that is not a key string", () => {
   ]);
 });
 
+test("mustMatchProblems and mayDifferProblems name a self-referencing YAML alias entry instead of throwing", () => {
+  // The entry was formatted with JSON.stringify, which throws on a cycle, so the run stopped with a
+  // TypeError instead of failing the fixture on load.
+  assert.deepEqual(mustMatchProblems(parseYaml("must_match: [score, &a [*a]]")), [
+    "must_match entry 2 is not a key string: <ref *1> [ [Circular *1] ]",
+  ]);
+  assert.deepEqual(mayDifferProblems(parseYaml("must_match: [score]\nmay_differ: [&b [*b]]")), [
+    "may_differ entry 1 is not a { path, reason } entry: <ref *1> [ [Circular *1] ]",
+  ]);
+});
+
 test("mayDifferProblems accepts entries that each carry a path and a reason and do not overlap must_match", () => {
   assert.deepEqual(mayDifferProblems({ must_match: ["score"], may_differ: [{ path: "findings", reason: "scan-only" }] }), []);
   // a contract with nothing that may differ needs no may_differ list
@@ -145,6 +156,52 @@ console.log(JSON.stringify({ score: 7 }));
       const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: `node ${bin}`, "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
       assert.equal(rc, 2, `${mustMatch || "(no must_match)"}\n${logged.join("\n")}`);
       assert.deepEqual(logged, [`[stub] contract.yaml ${NO_MUST_MATCH_KEY}`], mustMatch || "(no must_match)");
+      assert.equal(readFileSync(counter, "utf8"), "0");
+    } finally {
+      console.error = origError;
+      console.log = origLog;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("runFixture fails a fixture whose must_match or may_differ entry is a self-referencing YAML alias, before running a CLI", () => {
+  for (const [lists, expected] of [
+    [["must_match: [score, &a [*a]]", "may_differ: []"], "must_match entry 2 is not a key string: <ref *1> [ [Circular *1] ]"],
+    [["must_match: [score]", "may_differ: [&b [*b]]"], "may_differ entry 1 is not a { path, reason } entry: <ref *1> [ [Circular *1] ]"],
+  ] as const) {
+    const dir = mkdtempSync(join(tmpdir(), "parity-alias-"));
+    const fixture = join(dir, "fixtures", "stub");
+    mkdirSync(join(fixture, "expected"), { recursive: true });
+    writeFileSync(join(fixture, "contract.yaml"), [
+      "description: self-referencing alias stub",
+      "kind: package-name",
+      "package: ghost",
+      "exercises:",
+      '  hma: "{BIN}"',
+      "participants:",
+      "  - hma",
+      ...lists,
+      "",
+    ].join("\n"));
+    writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify({ score: 7 }));
+    const counter = join(dir, "n");
+    const bin = join(dir, "stub.mjs");
+    writeFileSync(counter, "0");
+    writeFileSync(bin, `
+import { readFileSync, writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(counter)}, String(Number(readFileSync(${JSON.stringify(counter)}, "utf8")) + 1));
+console.log(JSON.stringify({ score: 7 }));
+`);
+    const logged: string[] = [];
+    const origError = console.error;
+    const origLog = console.log;
+    console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+    console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+    try {
+      const rc = runFixture("stub", { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
+      assert.equal(rc, 2, `${lists.join(" / ")}\n${logged.join("\n")}`);
+      assert.deepEqual(logged, [`[stub] contract.yaml ${expected}`], lists.join(" / "));
       assert.equal(readFileSync(counter, "utf8"), "0");
     } finally {
       console.error = origError;

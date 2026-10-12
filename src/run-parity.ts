@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import { parse as parseYaml } from "yaml";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -187,6 +188,17 @@ function canonicalPath(path: string): string {
   return path.replace(/^\$\.?/, "").split(".").filter(Boolean).join(".");
 }
 
+// A contract entry as a reader wrote it, for a load-time problem line. JSON.stringify throws on a
+// self-referencing YAML alias (such as &a [*a]), which stopped the run with a TypeError instead of
+// failing the fixture; util.inspect marks the cycle instead of following it.
+function formatEntry(entry: unknown): string {
+  try {
+    return JSON.stringify(entry) ?? inspect(entry);
+  } catch {
+    return inspect(entry, { depth: 2, breakLength: Infinity });
+  }
+}
+
 // A contract that lists no must-match key gives a leg, and the comparison between the CLIs, no field
 // to disagree on, so the fixture passed with nothing compared. One line when must_match is missing,
 // empty or not a list, and one per entry that is not a key string (such as 1 or null), which would
@@ -197,7 +209,7 @@ export function mustMatchProblems(contract: Pick<FixtureContract, "must_match">)
   if (!Array.isArray(keys)) return ["must_match is not a list of keys"];
   if (keys.length > 0) {
     return keys.flatMap((key: unknown, i) =>
-      typeof key === "string" ? [] : [`must_match entry ${i + 1} is not a key string: ${JSON.stringify(key)}`],
+      typeof key === "string" ? [] : [`must_match entry ${i + 1} is not a key string: ${formatEntry(key)}`],
     );
   }
   return [
@@ -216,7 +228,7 @@ export function mayDifferProblems(contract: Pick<FixtureContract, "must_match" |
   const problems: string[] = [];
   entries.forEach((entry: unknown, i) => {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-      problems.push(`may_differ entry ${i + 1} is not a { path, reason } entry: ${JSON.stringify(entry)}`);
+      problems.push(`may_differ entry ${i + 1} is not a { path, reason } entry: ${formatEntry(entry)}`);
       return;
     }
     const { path, reason } = entry as { path?: unknown; reason?: unknown };
