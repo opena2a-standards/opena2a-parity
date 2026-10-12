@@ -2,6 +2,7 @@
   "found": true,
   "name": "anthropic",
   "packageType": "ai_tool",
+  "scanStatus": "pending",
   "source": "registry",
   "trustLevel": 2,
   "trustScore": 0.3533333333333334,
