@@ -41,7 +41,8 @@ fixtures/
 - `must_match` — list of keys equal across participating CLIs apart from object key order. A key is
   a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
   `findings[0].checkId`). A key that resolves in no participant's golden fails the fixture, since it
-  would compare nothing
+  would compare nothing. A `must_match` that lists no key compares nothing too, and fails the
+  fixture before any CLI runs
 - `may_differ` — list of `{ path, reason }` entries naming keys per-CLI variation is allowed on.
   The harness fails the fixture before running any CLI if an entry has no `reason`, or if its
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
@@ -78,7 +79,7 @@ change; if the rewording was not intended, it is a CLI regression and the golden
    `fixtures` directory itself (git cannot re-include a file whose parent directory is excluded).
    Check `git status` shows every input before committing.
 2. Run each CLI that exercises it manually against it; save stable outputs under `fixtures/<name>/expected/`.
-3. Write `contract.yaml` naming what must match and what may differ (with reasons).
+3. Write `contract.yaml` naming what must match (at least one key) and what may differ (with reasons).
 4. For each CLI that does not exercise the fixture, leave it out of `participants` and create
    `fixtures/<name>/expected/<cli>.skip` saying why it does not. The harness fails the fixture
    for a non-participant CLI with no sentinel or an empty one.

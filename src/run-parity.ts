@@ -187,6 +187,18 @@ function canonicalPath(path: string): string {
   return path.replace(/^\$\.?/, "").split(".").filter(Boolean).join(".");
 }
 
+// A contract that lists no must-match key gives a leg, and the comparison between the CLIs, no field
+// to disagree on, so the fixture passed with nothing compared. One line when must_match is missing,
+// empty or not a list; runFixture fails the fixture on it before it runs a CLI.
+export function mustMatchProblems(contract: Pick<FixtureContract, "must_match">): string[] {
+  const keys: unknown = contract.must_match ?? [];
+  if (!Array.isArray(keys)) return ["must_match is not a list of keys"];
+  if (keys.length > 0) return [];
+  return [
+    'must_match lists no key, so the fixture would compare nothing; list at least one key the participating CLIs must agree on (README.md "Contract model")',
+  ];
+}
+
 // may_differ tells a reader which keys may vary between CLIs and why; the comparison reads only
 // must_match, so nothing else notices an entry without its reason, or a key listed under both lists
 // (which is still compared, whatever may_differ says). One line per offending entry, naming it;
@@ -435,7 +447,7 @@ export function runFixture(
     console.error(`[${fixtureName}] kind=package-name requires 'package:' field`);
     return 2;
   }
-  const contractProblems = mayDifferProblems(contract);
+  const contractProblems = [...mustMatchProblems(contract), ...mayDifferProblems(contract)];
   if (contractProblems.length > 0) {
     for (const problem of contractProblems) console.error(`[${fixtureName}] contract.yaml ${problem}`);
     return 2;
