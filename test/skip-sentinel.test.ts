@@ -91,6 +91,23 @@ test("runFixture fails a fixture whose non-participant CLI has an empty sentinel
   assert.ok(!r.logged.some((l) => l.startsWith("[SKIP] stub × ai-trust")), r.logged.join("\n"));
 });
 
+test("the runFixture comment says 1 is any failure found while running the fixture, not only a failed leg", () => {
+  // every leg passes and the fixture still returns 1, here on an empty sentinel
+  const r = runHmaOnly(["opena2a"], ["ai-trust"]);
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.startsWith("[OK]   stub × hma")), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => l.includes("[FAIL] stub × hma")), r.logged.join("\n"));
+  const lines = readFileSync(join(repoRoot, "src", "run-parity.ts"), "utf8").split("\n");
+  const declared = lines.findIndex((l) => l.startsWith("export function runFixture("));
+  assert.ok(declared > 0, "src/run-parity.ts does not declare runFixture");
+  let first = declared;
+  while (first > 0 && lines[first - 1].startsWith("//")) first--;
+  // the comment wraps across lines, so read it as one
+  const comment = lines.slice(first, declared).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
+  assert.match(comment, /\b1 for any failure found while running the fixture\b/, comment);
+  assert.doesNotMatch(comment, /\b1 for a failed leg\b/, comment);
+});
+
 test("every committed fixture covers each CLI with a participant entry or a skip sentinel that says why", () => {
   const fixtures = readdirSync(join(repoRoot, "fixtures")).filter((name) => existsSync(join(repoRoot, "fixtures", name, "contract.yaml")));
   assert.ok(fixtures.length > 0, "expected at least one fixtures/*/contract.yaml");

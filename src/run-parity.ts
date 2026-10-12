@@ -420,7 +420,10 @@ const readGoldenFile: GoldenReader = (goldenPath) => JSON.parse(readFileSync(gol
 
 // Exported, with the two roots overridable, so a unit test can drive one fixture end to end
 // against a stub CLI in a temporary directory instead of the repository's own fixtures/ and actual/.
-// Returns 0 for a fixture that passes, 1 for a failed leg and 2 for a contract the harness cannot run.
+// Returns 0 for a fixture that passes, 1 for any failure found while running the fixture and 2 for a
+// contract the harness cannot run. A failed leg is one such failure; so are a must-match key in no golden,
+// a missing golden, a participant without an exercises entry, a difference between CLIs and a missing or
+// empty skip sentinel, so a fixture can return 1 after every leg printed [OK].
 export function runFixture(
   fixtureName: string,
   bins: Record<CLI, string>,
