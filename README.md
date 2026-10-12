@@ -125,10 +125,15 @@ commit runs no unit tests; bumping its pin turns them on. For a consumer pinned 
 `e7a87e2`, a unit test that fails on `main` turns its parity leg red.
 The three checks of this repo's own ignore file in `test/ignore-file.test.ts` skip when
 `GITHUB_REPOSITORY` names another repository, and the one that asks git about this repo's
-checkout also skips in a tree that is not its own git checkout; that file's three tests of its
-helper functions, and the remaining unit tests, which cover the harness that consumers run, stay
-on everywhere.
-A `.gitignore` change lands together with its `EXPECTED_RULES` update in that test.
+checkout also skips in a tree that is not its own git checkout. The two type-check tests in
+`test/typecheck.test.ts` skip for another repository as well. Both files' tests of their helper
+functions, and the remaining unit tests, which cover the harness that consumers run, stay on
+everywhere.
+A `.gitignore` change lands together with its `EXPECTED_RULES` update in `test/ignore-file.test.ts`.
+
+`npm test` also type-checks the harness and its tests. Node runs both by stripping their type
+annotations without checking them, so `test/typecheck.test.ts` runs `tsc` over them with the
+strict options in `tsconfig.json`. `npm run typecheck` runs that check on its own.
 
 ## Intentional-drift demo
 

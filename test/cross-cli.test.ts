@@ -116,7 +116,7 @@ test("crossCliDiffs leaves out a CLI whose golden omits a key even when that CLI
 });
 
 test("crossCliDiffs compares by value: key order is not a difference, null is a value", () => {
-  const legs = [
+  const legs: Parameters<typeof crossCliDiffs>[1] = [
     { cli: "hma", golden: { scores: { a: 1, b: 2 }, level: null }, actual: { scores: { a: 1, b: 2 }, level: null } },
     { cli: "opena2a", golden: { scores: { b: 2, a: 1 }, level: null }, actual: { scores: { b: 2, a: 1 }, level: null } },
   ];
