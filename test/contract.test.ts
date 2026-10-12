@@ -33,8 +33,8 @@ test("mustMatchProblems names a must_match that is not a list", () => {
 });
 
 test("mustMatchProblems names each entry that is not a key string", () => {
-  // Without this an entry such as 1 or null passed on load and was reported later as a key that
-  // resolves in no golden, instead of as a malformed contract.
+  // Without this an entry such as 1 or null passed on load and would otherwise stop the run with a
+  // TypeError when the key is looked up, instead of failing its fixture as a malformed contract.
   assert.deepEqual(mustMatchProblems({ must_match: [null] } as never), ["must_match entry 1 is not a key string: null"]);
   assert.deepEqual(mustMatchProblems(parseYaml("must_match: [score, 1, null, [a], { b: c }]")), [
     "must_match entry 2 is not a key string: 1",
@@ -250,6 +250,50 @@ test("runFixtures counts a fixture that fails on its contract once, as it counts
     assert.equal(runFixtures(["no-reason", "passing"], bins, dirs), 1, logged.join("\n"));
     assert.equal(runFixtures(["no-reason", "drifted", "passing"], bins, dirs), 2, logged.join("\n"));
     assert.equal(runFixtures(["passing"], bins, dirs), 0, logged.join("\n"));
+  } finally {
+    console.error = origError;
+    console.log = origLog;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runFixtures fails a fixture with a must_match entry that is not a key string and still runs the next fixture", () => {
+  // Before the check on load, `must_match: [score, 1]` reached the key lookup, which threw
+  // "TypeError: path.replace is not a function" and stopped the run before the valid fixture ran.
+  const dir = mkdtempSync(join(tmpdir(), "parity-non-string-key-"));
+  const bin = join(dir, "stub.mjs");
+  writeFileSync(bin, `console.log(JSON.stringify({ score: 98 }));`);
+  const addFixture = (name: string, mustMatch: string) => {
+    const fixture = join(dir, "fixtures", name);
+    mkdirSync(join(fixture, "expected"), { recursive: true });
+    writeFileSync(join(fixture, "contract.yaml"), [
+      `description: ${name} stub`,
+      "kind: package-name",
+      "package: ghost",
+      "exercises:",
+      '  hma: "{BIN}"',
+      "participants:",
+      "  - hma",
+      mustMatch,
+      "may_differ: []",
+      "",
+    ].join("\n"));
+    writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify({ score: 98 }));
+    for (const cli of ["opena2a", "ai-trust"]) writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+  };
+  addFixture("non-string-key", "must_match: [score, 1]");
+  addFixture("valid", "must_match: [score]");
+  const logged: string[] = [];
+  const origError = console.error;
+  const origLog = console.log;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    const bins = { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" };
+    const dirs = { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") };
+    assert.equal(runFixtures(["non-string-key", "valid"], bins, dirs), 1, logged.join("\n"));
+    assert.ok(logged.includes("[non-string-key] contract.yaml must_match entry 2 is not a key string: 1"), logged.join("\n"));
+    assert.ok(logged.some((line) => line.startsWith("[OK]   valid × hma:")), logged.join("\n"));
   } finally {
     console.error = origError;
     console.log = origLog;

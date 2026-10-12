@@ -190,7 +190,7 @@ function canonicalPath(path: string): string {
 // A contract that lists no must-match key gives a leg, and the comparison between the CLIs, no field
 // to disagree on, so the fixture passed with nothing compared. One line when must_match is missing,
 // empty or not a list, and one per entry that is not a key string (such as 1 or null), which would
-// otherwise be reported later as a key that resolves in no golden; runFixture fails the fixture on
+// otherwise stop the run with a TypeError when the key is looked up; runFixture fails the fixture on
 // any of them before it runs a CLI.
 export function mustMatchProblems(contract: Pick<FixtureContract, "must_match">): string[] {
   const keys: unknown = contract.must_match ?? [];
