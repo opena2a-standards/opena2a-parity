@@ -32,6 +32,18 @@ test("mustMatchProblems names a must_match that is not a list", () => {
   assert.deepEqual(mustMatchProblems({ must_match: { score: true } } as never), ["must_match is not a list of keys"]);
 });
 
+test("mustMatchProblems names each entry that is not a key string", () => {
+  // Without this an entry such as 1 or null passed on load and was reported later as a key that
+  // resolves in no golden, instead of as a malformed contract.
+  assert.deepEqual(mustMatchProblems({ must_match: [null] } as never), ["must_match entry 1 is not a key string: null"]);
+  assert.deepEqual(mustMatchProblems(parseYaml("must_match: [score, 1, null, [a], { b: c }]")), [
+    "must_match entry 2 is not a key string: 1",
+    "must_match entry 3 is not a key string: null",
+    'must_match entry 4 is not a key string: ["a"]',
+    'must_match entry 5 is not a key string: {"b":"c"}',
+  ]);
+});
+
 test("mayDifferProblems accepts entries that each carry a path and a reason and do not overlap must_match", () => {
   assert.deepEqual(mayDifferProblems({ must_match: ["score"], may_differ: [{ path: "findings", reason: "scan-only" }] }), []);
   // a contract with nothing that may differ needs no may_differ list

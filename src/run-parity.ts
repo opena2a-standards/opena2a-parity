@@ -189,11 +189,17 @@ function canonicalPath(path: string): string {
 
 // A contract that lists no must-match key gives a leg, and the comparison between the CLIs, no field
 // to disagree on, so the fixture passed with nothing compared. One line when must_match is missing,
-// empty or not a list; runFixture fails the fixture on it before it runs a CLI.
+// empty or not a list, and one per entry that is not a key string (such as 1 or null), which would
+// otherwise be reported later as a key that resolves in no golden; runFixture fails the fixture on
+// any of them before it runs a CLI.
 export function mustMatchProblems(contract: Pick<FixtureContract, "must_match">): string[] {
   const keys: unknown = contract.must_match ?? [];
   if (!Array.isArray(keys)) return ["must_match is not a list of keys"];
-  if (keys.length > 0) return [];
+  if (keys.length > 0) {
+    return keys.flatMap((key: unknown, i) =>
+      typeof key === "string" ? [] : [`must_match entry ${i + 1} is not a key string: ${JSON.stringify(key)}`],
+    );
+  }
   return [
     'must_match lists no key, so the fixture would compare nothing; list at least one key the participating CLIs must agree on (README.md "Contract model")',
   ];
