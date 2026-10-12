@@ -39,7 +39,9 @@ fixtures/
 - `exercises` — which CLI commands the fixture runs
 - `participants` — list of CLIs for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture
 - `must_match` — list of JSONPath-ish keys equal across participating CLIs apart from object key order
-- `may_differ` — list of keys per-CLI variation is allowed on (documented reason required)
+- `may_differ` — list of `{ path, reason }` entries naming keys per-CLI variation is allowed on.
+  The harness fails the fixture before running any CLI if an entry has no `reason`, or if its
+  `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
 - `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs)
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.

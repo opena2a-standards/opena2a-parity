@@ -179,6 +179,37 @@ function getPath(obj: unknown, path: string): unknown {
   return cur;
 }
 
+// A path as getPath reads it, so "$.score" and "score" name the same key.
+function canonicalPath(path: string): string {
+  return path.replace(/^\$\.?/, "").split(".").filter(Boolean).join(".");
+}
+
+// may_differ tells a reader which keys may vary between CLIs and why; the comparison reads only
+// must_match, so nothing else notices an entry without its reason, or a key listed under both lists
+// (which is still compared, whatever may_differ says). One line per offending entry, naming it;
+// runFixture fails the fixture on any of them before it runs a CLI.
+export function mayDifferProblems(contract: Pick<FixtureContract, "must_match" | "may_differ">): string[] {
+  const entries: unknown = contract.may_differ ?? [];
+  if (!Array.isArray(entries)) return ["may_differ is not a list of { path, reason } entries"];
+  const mustMatch = new Set((Array.isArray(contract.must_match) ? contract.must_match : []).map(String).map(canonicalPath));
+  const problems: string[] = [];
+  entries.forEach((entry: unknown, i) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      problems.push(`may_differ entry ${i + 1} is not a { path, reason } entry: ${JSON.stringify(entry)}`);
+      return;
+    }
+    const { path, reason } = entry as { path?: unknown; reason?: unknown };
+    const hasPath = typeof path === "string" && path.trim() !== "";
+    const name = `may_differ entry ${i + 1}${hasPath ? ` (path: ${path})` : ""}`;
+    if (!hasPath) problems.push(`${name} has no path`);
+    if (typeof reason !== "string" || reason.trim() === "") problems.push(`${name} has no reason; say why this key may differ between CLIs`);
+    if (hasPath && mustMatch.has(canonicalPath(path as string))) {
+      problems.push(`${name} is also listed under must_match, where it is still compared; list it under one of the two`);
+    }
+  });
+  return problems;
+}
+
 function stripKey(obj: unknown, path: string): void {
   if (path === "" || path === "$") return;
   const parts = path.replace(/^\$\.?/, "").split(".").filter(Boolean);
@@ -373,6 +404,11 @@ export function runFixture(
   }
   if (kind === "package-name" && !contract.package) {
     console.error(`[${fixtureName}] kind=package-name requires 'package:' field`);
+    return 2;
+  }
+  const contractProblems = mayDifferProblems(contract);
+  if (contractProblems.length > 0) {
+    for (const problem of contractProblems) console.error(`[${fixtureName}] contract.yaml ${problem}`);
     return 2;
   }
 
