@@ -719,10 +719,14 @@ export function runFixture(
       console.error(`  Intended output change? Re-baseline golden-first: README.md "Re-baselining goldens".`);
       failures += diffs.length;
     } else {
+      // A key in no golden is named as such on every leg's line, the keyless one's included, so the
+      // keys called "not in its golden" are only those another golden carries.
       const keylessGolden = keyless.includes(cli);
-      const notCompared = keylessGolden
-        ? `; not compared: ${contract.must_match.join(", ")} (not in its golden)`
-        : unresolved.length > 0 ? `; not compared: ${unresolved.join(", ")} (in no golden)` : "";
+      const uncompared = [
+        ...(keylessGolden ? [`${mustMatch.join(", ")} (not in its golden)`] : []),
+        ...(unresolved.length > 0 ? [`${unresolved.join(", ")} (in no golden)`] : []),
+      ];
+      const notCompared = uncompared.length > 0 ? `; not compared: ${uncompared.join("; ")}` : "";
       // A leg that compared no field has nothing to call equal, so it does not print [OK].
       if (mustMatch.length === 0 || keylessGolden) {
         console.log(`[NONE] ${fixtureName} × ${cli}: no must-match field compared${notCompared}`);

@@ -23,10 +23,57 @@ export function skipReason(repository: string | undefined): string | false {
 
 const skip = skipReason(process.env.GITHUB_REPOSITORY);
 
+// The words the shell npm runs a script with splits `script` into, with quotes and backslashes
+// removed as that shell removes them, so `tsc --project "my config.json"` gives the compiler one
+// path. A script that needs more of the shell than its words (an operator, a newline, an
+// expansion, a glob or a comment) throws, since the compiler run here would not be the one the
+// script runs.
+export function shellWords(script: string): string[] {
+  const refuse = (what: string): never => {
+    throw new Error(`the typecheck script ${JSON.stringify(script)} has ${what}, which these tests do not read as the shell does: give tsc its arguments as plain or quoted words`);
+  };
+  const words: string[] = [];
+  let word: string | undefined;
+  for (let i = 0; i < script.length; i++) {
+    const c = script[i];
+    if (c === " " || c === "\t") {
+      if (word !== undefined) words.push(word);
+      word = undefined;
+    } else if (c === "'") {
+      const end = script.indexOf("'", i + 1);
+      if (end === -1) refuse("an unterminated '");
+      word = (word ?? "") + script.slice(i + 1, end);
+      i = end;
+    } else if (c === '"') {
+      word ??= "";
+      for (i++; script[i] !== '"'; i++) {
+        if (i >= script.length) refuse('an unterminated "');
+        let d = script[i];
+        if (d === "$" || d === "`") refuse(`${d} inside double quotes`);
+        if (d === "\\" && '$`"\\\n'.includes(script[i + 1])) {
+          d = script[++i];
+          if (d === "\n") continue;
+        }
+        word += d;
+      }
+    } else if (c === "\\") {
+      if (i + 1 >= script.length) refuse("a trailing \\");
+      i++;
+      if (script[i] !== "\n") word = (word ?? "") + script[i];
+    } else if ("|&;<>()$`*?[{}\n".includes(c) || (word === undefined && (c === "#" || c === "~"))) {
+      refuse(c === "\n" ? "a newline" : `an unquoted ${c}`);
+    } else {
+      word = (word ?? "") + c;
+    }
+  }
+  if (word !== undefined) words.push(word);
+  return words;
+}
+
 // The arguments the `typecheck` script gives the compiler, so the script and these tests run one check.
 function scriptArgs(): string[] {
   const { scripts } = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as { scripts?: Record<string, string> };
-  const [command, ...args] = (scripts?.typecheck ?? "").split(/\s+/);
+  const [command, ...args] = shellWords(scripts?.typecheck ?? "");
   assert.equal(command, "tsc", "package.json must keep a `typecheck` script that runs tsc");
   return args;
 }
@@ -66,6 +113,37 @@ test("the type check reads the harness and every test file", { skip }, () => {
   const unread = sources.filter((path) => !read.has(realpathSync(join(repoRoot, path))));
   assert.deepEqual(unread, [], `tsconfig.json leaves these out of the type check: ${unread.join(", ")}`);
   assert.ok(sources.includes(join("src", "run-parity.ts")) && sources.length > 1, sources.join(", "));
+});
+
+test("the typecheck script reaches the compiler as the words the shell splits it into", () => {
+  assert.deepEqual(shellWords('tsc --project "my config.json"'), ["tsc", "--project", "my config.json"]);
+  assert.deepEqual(shellWords("tsc --project 'my config.json'"), ["tsc", "--project", "my config.json"]);
+  assert.deepEqual(shellWords("tsc --project my\\ config.json"), ["tsc", "--project", "my config.json"]);
+  assert.deepEqual(shellWords(`tsc -p "my "'con'fig.json`), ["tsc", "-p", "my config.json"]);
+  assert.deepEqual(shellWords(`tsc -p "a\\"b\\\\c\\d"`), ["tsc", "-p", 'a"b\\c\\d']);
+  assert.deepEqual(shellWords("tsc -p 'it'\\''s.json'"), ["tsc", "-p", "it's.json"]);
+  assert.deepEqual(shellWords("tsc \\\n  -p x.json"), ["tsc", "-p", "x.json"]);
+  assert.deepEqual(shellWords("  tsc \t --project  tsconfig.json  "), ["tsc", "--project", "tsconfig.json"]);
+  assert.deepEqual(shellWords('tsc "" a#b'), ["tsc", "", "a#b"]);
+  assert.deepEqual(shellWords('tsc -p "a\\\\\nb"'), ["tsc", "-p", "a\\\nb"]);
+  assert.deepEqual(shellWords('tsc -p "a\\\nb"'), ["tsc", "-p", "ab"]);
+  assert.deepEqual(shellWords(""), []);
+  for (const script of [
+    "tsc -p x.json && echo done",
+    "tsc -p x.json; echo done",
+    "tsc -p x.json\necho done",
+    "tsc -p $CONFIG",
+    'tsc -p "$CONFIG"',
+    "tsc -p `cat name`",
+    "tsc -p *.json",
+    "tsc -p x.json # a comment",
+    "tsc -p ~/x.json",
+    "tsc -p 'x.json",
+    'tsc -p "x.json',
+    "tsc -p x.json\\",
+  ]) {
+    assert.throws(() => shellWords(script), /give tsc its arguments as plain or quoted words/, script);
+  }
 });
 
 test("the type check runs locally and in this repository, and skips for a consumer", () => {
