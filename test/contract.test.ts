@@ -9,6 +9,7 @@ import { parse as parseYaml } from "yaml";
 import {
   exerciseCommand,
   exercisesProblems,
+  fixtureNames,
   kindProblems,
   mayDifferProblems,
   mustMatchProblems,
@@ -178,7 +179,7 @@ test("normalizeProblems accepts the rules the committed contracts use, and no no
     assert.deepEqual(normalizeProblems({} as never, fixtureInputDir), []);
     assert.deepEqual(normalizeProblems(rules(stripKey, digits), fixtureInputDir), []);
   }
-  // only the directory fixtures carry the rule that is {FIXTURE_INPUT_DIR} alone: without an input directory it is empty
+  // only the directory fixtures carry the rule that is {FIXTURE_INPUT_DIR} alone: a kind: package-name fixture has no input directory
   assert.deepEqual(normalizeProblems(rules(stripKey, inputDir, digits), "/fixtures/stub/input"), []);
 });
 
@@ -433,13 +434,22 @@ test('README.md "Contract model" describes the load checks as the harness applie
   const section = (readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "").replace(/\s+/g, " ");
   assert.match(section, /every `\{FIXTURE_INPUT_DIR\}` stands for the fixture's input directory, matched literally/);
   assert.match(section, /A `contract\.yaml` that is not one valid YAML document .* fails the fixture before any CLI runs/);
+  // The section said {FIXTURE_INPUT_DIR} stands for an empty string in a kind: package-name fixture; a
+  // pattern there that holds it fails on load, since {FIXTURE_INPUT_DIR}.* with an empty replacement
+  // deleted every string value.
+  assert.doesNotMatch(section, /for an empty string in a `kind: package-name` fixture/);
+  assert.match(
+    section,
+    /So does a `pattern` that holds `\{FIXTURE_INPUT_DIR\}` in a `kind: package-name` fixture, which has no input directory for it to stand for/,
+  );
+  assert.match(section, /`\{FIXTURE_INPUT_DIR\}\.\*` with an empty `replacement` would delete every string value/);
   // The section named an empty pattern only; one that is not empty and can match empty text fails on load
   // too, unless its replacement is empty, including one that matches empty text only next to a character.
   assert.match(
     section,
-    /So does a `pattern` that holds `\{FIXTURE_INPUT_DIR\}` and can match empty text with that value, unless its `replacement` is empty, which inserts nothing: there `\(\?:\{FIXTURE_INPUT_DIR\}\)` is `\(\?:\)`, which is not empty and matches at every position of every string too/,
+    /So does a `pattern` that holds `\{FIXTURE_INPUT_DIR\}` and can match empty text with the input directory there, unless its `replacement` is empty, which inserts nothing/,
   );
-  assert.match(section, /`\\b\{FIXTURE_INPUT_DIR\}` is `\\b`, which matches empty text next to each word/);
+  assert.match(section, /`\\b\|\{FIXTURE_INPUT_DIR\}` matches empty text next to each word/);
   // The section said a package that is not a string fails any fixture; a directory fixture with one runs.
   assert.match(
     section,
@@ -614,116 +624,169 @@ test("participantsProblems names a participants that lists no CLI, and each CLI 
   ]);
 });
 
-test("normalizeProblems compiles a pattern with what the fixture puts in place of {FIXTURE_INPUT_DIR}", () => {
+test("normalizeProblems compiles a pattern with the input directory in place of {FIXTURE_INPUT_DIR}", () => {
   // The pattern was compiled with `input` there, so one that is a regular expression only with that
   // value passed on load and stopped the run when the first output was normalized.
   const rule = (pattern: string) => parseYaml(`normalize: [{ kind: replace_regex, pattern: ${JSON.stringify(pattern)}, replacement: "" }]`);
-  const head = "normalize rule 1 (replace_regex) pattern is not a regular expression with {FIXTURE_INPUT_DIR} standing for";
-  // a kind: package-name fixture has no input directory, so the placeholder is an empty string
   assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}*"), "/fixtures/stub/input"), []);
-  assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}*"), ""), [
-    `${head} an empty string: Invalid regular expression: /*/g: Nothing to repeat`,
-  ]);
-  assert.deepEqual(normalizeProblems(rule("[a-{FIXTURE_INPUT_DIR}]"), ""), []);
   assert.deepEqual(normalizeProblems(rule("[a-{FIXTURE_INPUT_DIR}]"), "/fixtures/stub/input"), [
-    `${head} the input directory: Invalid regular expression: /[a-/fixtures/stub/input]/g: Range out of order in character class`,
+    "normalize rule 1 (replace_regex) pattern is not a regular expression with {FIXTURE_INPUT_DIR} standing for the input directory: Invalid regular expression: /[a-/fixtures/stub/input]/g: Range out of order in character class",
   ]);
 });
 
-test("normalizeProblems names a pattern that is empty with what the fixture puts in place of {FIXTURE_INPUT_DIR}", () => {
-  // In a kind: package-name fixture the pattern passed as one that is not empty and was compiled to an
-  // empty regular expression, which matches at every position of every string: "ab" became "<IN>a<IN>b<IN>".
-  const rule = (pattern: string) => parseYaml(`normalize: [{ kind: replace_regex, pattern: ${JSON.stringify(pattern)}, replacement: "<IN>" }]`);
-  const empty =
-    "normalize rule 1 (replace_regex) pattern is empty with {FIXTURE_INPUT_DIR} standing for an empty string, so it would match at every position of every string";
-  for (const pattern of ["{FIXTURE_INPUT_DIR}", "{FIXTURE_INPUT_DIR}{FIXTURE_INPUT_DIR}"]) {
-    assert.deepEqual(normalizeProblems(rule(pattern), ""), [empty], pattern);
-    assert.deepEqual(normalizeProblems(rule(pattern), "/fixtures/stub/input"), [], pattern);
-  }
-  // a pattern written empty is still a rule with no pattern
-  assert.deepEqual(normalizeProblems(rule(""), ""), ["normalize rule 1 (replace_regex) has no pattern"]);
-  // an input directory named as the replacement sequence that expands to nothing here is not an empty string
-  assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}"), "$`"), []);
-});
-
-test("normalizeProblems names a pattern that can match empty text with what the fixture puts in place of {FIXTURE_INPUT_DIR}", () => {
-  // In a kind: package-name fixture (?:{FIXTURE_INPUT_DIR}) is (?:), which is not empty, so it passed the
-  // check for an empty pattern and still matched at every position of every string: "ab" became "<IN>a<IN>b<IN>".
-  const rule = (pattern: string) => parseYaml(`normalize: [{ kind: replace_regex, pattern: ${JSON.stringify(pattern)}, replacement: "<IN>" }]`);
-  const head = "normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for";
-  const tail = "would insert the replacement where it matched no text";
+test("normalizeProblems names a pattern that holds {FIXTURE_INPUT_DIR} in a kind: package-name fixture, which has no input directory", () => {
+  // The placeholder stood for an empty string there: {FIXTURE_INPUT_DIR}* was *, which is not a regular
+  // expression, {FIXTURE_INPUT_DIR} alone was empty and (?:{FIXTURE_INPUT_DIR}) was (?:), which match at every
+  // position of every string, and {FIXTURE_INPUT_DIR}.* and {FIXTURE_INPUT_DIR}[^/]* with an empty replacement
+  // passed and deleted every string value, as {FIXTURE_INPUT_DIR}.+ did, which can hide a must-match difference.
+  assert.equal("hma 1.2.3 high".replace(rulePattern("{FIXTURE_INPUT_DIR}.*", ""), ""), "");
   assert.equal("ab".replace(rulePattern("(?:{FIXTURE_INPUT_DIR})", ""), "<IN>"), "<IN>a<IN>b<IN>");
-  for (const [pattern, compiled] of [
-    ["(?:{FIXTURE_INPUT_DIR})", "/(?:)/g"],
-    ["({FIXTURE_INPUT_DIR})+", "/()+/g"],
-    ["{FIXTURE_INPUT_DIR}|x", "/|x/g"],
-    ["^{FIXTURE_INPUT_DIR}$", "/^$/g"],
-  ]) {
-    assert.deepEqual(normalizeProblems(rule(pattern), ""), [`${head} an empty string: ${compiled} ${tail}`], pattern);
-    assert.deepEqual(normalizeProblems(rule(pattern), "/fixtures/stub/input"), [], pattern);
+  const rule = (pattern: string, replacement: string) =>
+    parseYaml(`normalize: [{ kind: replace_regex, pattern: ${JSON.stringify(pattern)}, replacement: ${JSON.stringify(replacement)} }]`);
+  const holds =
+    "normalize rule 1 (replace_regex) pattern holds {FIXTURE_INPUT_DIR}, but a kind: package-name fixture has no input directory for it to stand for";
+  const patterns = [
+    "{FIXTURE_INPUT_DIR}",
+    "{FIXTURE_INPUT_DIR}{FIXTURE_INPUT_DIR}",
+    "{FIXTURE_INPUT_DIR}*",
+    "(?:{FIXTURE_INPUT_DIR})",
+    "{FIXTURE_INPUT_DIR}.*",
+    "{FIXTURE_INPUT_DIR}[^/]*",
+    "{FIXTURE_INPUT_DIR}.+",
+    "a{FIXTURE_INPUT_DIR}b",
+  ];
+  for (const pattern of patterns) {
+    for (const replacement of ["", "<IN>"]) {
+      assert.deepEqual(normalizeProblems(rule(pattern, replacement), ""), [holds], `${pattern} -> ${JSON.stringify(replacement)}`);
+      // in a directory fixture the placeholder stands for the input directory, and each of these passes
+      assert.deepEqual(normalizeProblems(rule(pattern, replacement), "/fixtures/stub/input"), [], `${pattern} -> ${JSON.stringify(replacement)}`);
+    }
   }
-  // an input directory that is optional matches the empty string in a directory fixture too
-  assert.equal("ab".replace(rulePattern("({FIXTURE_INPUT_DIR})?", "/fixtures/stub/input"), "<IN>"), "<IN>a<IN>b<IN>");
-  assert.deepEqual(normalizeProblems(rule("({FIXTURE_INPUT_DIR})?"), "/fixtures/stub/input"), [
-    `${head} the input directory: /(\\/fixtures\\/stub\\/input)?/g ${tail}`,
-  ]);
-  // a pattern that still matches only text with the placeholder empty passes
-  assert.deepEqual(normalizeProblems(rule("a{FIXTURE_INPUT_DIR}b"), ""), []);
-  assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}/?SOUL\\.md"), ""), []);
-  // a pattern written without the placeholder is what its author wrote: ^$ replaces a value that is an empty string
-  assert.deepEqual(normalizeProblems(rule("^$"), ""), []);
+  // a pattern written empty is still a rule with no pattern, and one without the placeholder is checked as written
+  assert.deepEqual(normalizeProblems(rule("", "<IN>"), ""), ["normalize rule 1 (replace_regex) has no pattern"]);
+  assert.deepEqual(normalizeProblems(rule("\\d+", ""), ""), []);
+  // an input directory named as the replacement sequence that expands to nothing is not an empty string
+  assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}", "<IN>"), "$`"), []);
 });
 
-test("normalizeProblems names a pattern that matches empty text only next to a character with the placeholder an empty string", () => {
-  // Run on an empty string alone, \b{FIXTURE_INPUT_DIR} and {FIXTURE_INPUT_DIR}(?=b) passed in a kind:
-  // package-name fixture: \b and (?=b) match no text there, but match empty text next to a word and before
-  // a b. Each pattern below is shown inserting the replacement into its text where it matched no text.
+test("normalizeProblems names a pattern that can match empty text with the input directory in place of {FIXTURE_INPUT_DIR}", () => {
+  // ({FIXTURE_INPUT_DIR})? matches the empty string, so it matched at every position of every string:
+  // "ab" became "<IN>a<IN>b<IN>".
   const rule = (pattern: string) => parseYaml(`normalize: [{ kind: replace_regex, pattern: ${JSON.stringify(pattern)}, replacement: "<IN>" }]`);
+  const inputDir = "/in";
   const problem = (compiled: string) =>
-    `normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for an empty string: ${compiled} would insert the replacement where it matched no text`;
-  for (const [pattern, compiled, text, normalized] of [
-    ["\\b{FIXTURE_INPUT_DIR}", "/\\b/g", "ab cd", "<IN>ab<IN> <IN>cd<IN>"],
-    ["{FIXTURE_INPUT_DIR}(?=b)", "/(?=b)/g", "ab cd", "a<IN>b cd"],
-    ["{FIXTURE_INPUT_DIR}\\B", "/\\B/g", "ab", "a<IN>b"],
-    ["(?<=a){FIXTURE_INPUT_DIR}", "/(?<=a)/g", "ab", "a<IN>b"],
-    ["{FIXTURE_INPUT_DIR}(?!a)", "/(?!a)/g", "a", "a<IN>"],
-    // a part that may repeat zero times, however it is written
-    ["x{0}{FIXTURE_INPUT_DIR}", "/x{0}/g", "b", "<IN>b<IN>"],
-    ["{FIXTURE_INPUT_DIR}[a]{0,3}", "/[a]{0,3}/g", "b", "<IN>b<IN>"],
-    ["{FIXTURE_INPUT_DIR}(?:a|c?)", "/(?:a|c?)/g", "b", "<IN>b<IN>"],
-    ["{FIXTURE_INPUT_DIR}(?i:a*)", "/(?i:a*)/g", "b", "<IN>b<IN>"],
-    ["{FIXTURE_INPUT_DIR}\\x41*", "/\\x41*/g", "b", "<IN>b<IN>"],
-    ["{FIXTURE_INPUT_DIR}\\u0041?", "/\\u0041?/g", "b", "<IN>b<IN>"],
-    ["{FIXTURE_INPUT_DIR}\\101*", "/\\101*/g", "b", "<IN>b<IN>"],
-    // without the u flag, \u not followed by four hex digits is a u, here repeated zero times
-    ["{FIXTURE_INPUT_DIR}\\u{0}", "/\\u{0}/g", "b", "<IN>b<IN>"],
-    // a backreference to a group that took no part matches empty text
-    ["(a)|\\1{FIXTURE_INPUT_DIR}", "/(a)|\\1/g", "b", "<IN>b<IN>"],
-    ["(?<n>a)|\\k<n>{FIXTURE_INPUT_DIR}", "/(?<n>a)|\\k<n>/g", "b", "<IN>b<IN>"],
+    `normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for the input directory: ${compiled} would insert the replacement where it matched no text`;
+  assert.equal("ab".replace(rulePattern("({FIXTURE_INPUT_DIR})?", inputDir), "<IN>"), "<IN>a<IN>b<IN>");
+  for (const [pattern, compiled] of [
+    ["({FIXTURE_INPUT_DIR})?", "/(\\/in)?/g"],
+    ["(?:|{FIXTURE_INPUT_DIR})", "/(?:|\\/in)/g"],
+    ["({FIXTURE_INPUT_DIR})*", "/(\\/in)*/g"],
+    ["{FIXTURE_INPUT_DIR}|", "/\\/in|/g"],
+    ["^(?:{FIXTURE_INPUT_DIR})?$", "/^(?:\\/in)?$/g"],
   ]) {
-    assert.equal(text.replace(rulePattern(pattern, ""), "<IN>"), normalized, pattern);
-    assert.deepEqual(normalizeProblems(rule(pattern), ""), [problem(compiled)], pattern);
+    assert.deepEqual(normalizeProblems(rule(pattern), inputDir), [problem(compiled)], pattern);
+  }
+  // a pattern that must match the input directory passes
+  for (const pattern of ["{FIXTURE_INPUT_DIR}", "(?:{FIXTURE_INPUT_DIR})", "({FIXTURE_INPUT_DIR})+", "^{FIXTURE_INPUT_DIR}$", "a?{FIXTURE_INPUT_DIR}b?", "{FIXTURE_INPUT_DIR}/?SOUL\\.md"]) {
+    assert.deepEqual(normalizeProblems(rule(pattern), inputDir), [], pattern);
+  }
+  // a pattern written without the placeholder is what its author wrote: ^$ replaces a value that is an empty string
+  assert.deepEqual(normalizeProblems(rule("^$"), inputDir), []);
+});
+
+test("normalizeProblems names a pattern with an alternative that matches empty text only next to a character", () => {
+  // Run on an empty string alone, \b and (?=b) match no text, but they match empty text next to a word and
+  // before a b. Each pattern below, an alternative beside {FIXTURE_INPUT_DIR}, is shown inserting the
+  // replacement into its text where it matched no text.
+  const rule = (pattern: string) => parseYaml(`normalize: [{ kind: replace_regex, pattern: ${JSON.stringify(pattern)}, replacement: "<IN>" }]`);
+  const inputDir = "/in";
+  const problem = (compiled: string) =>
+    `normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for the input directory: ${compiled} would insert the replacement where it matched no text`;
+  for (const [alternative, text, normalized] of [
+    ["\\b", "ab cd", "<IN>ab<IN> <IN>cd<IN>"],
+    ["(?=b)", "ab cd", "a<IN>b cd"],
+    ["\\B", "ab", "a<IN>b"],
+    ["(?<=a)", "ab", "a<IN>b"],
+    ["(?!a)", "a", "a<IN>"],
+    // a part that may repeat zero times, however it is written
+    ["x{0}", "b", "<IN>b<IN>"],
+    ["[a]{0,3}", "b", "<IN>b<IN>"],
+    ["(?:a|c?)", "b", "<IN>b<IN>"],
+    ["(?i:a*)", "b", "<IN>b<IN>"],
+    ["\\x41*", "b", "<IN>b<IN>"],
+    ["\\u0041?", "b", "<IN>b<IN>"],
+    ["\\101*", "b", "<IN>b<IN>"],
+    // without the u flag, \u not followed by four hex digits is a u, here repeated zero times
+    ["\\u{0}", "b", "<IN>b<IN>"],
+    // a backreference to a group that took no part matches empty text
+    ["(a)|\\1", "b", "<IN>b<IN>"],
+    ["(?<n>a)|\\k<n>", "b", "<IN>b<IN>"],
+    // a class ends at the first ] that is not escaped, so [\]] is one class, which ? lets repeat zero times
+    ["[\\]]?", "ab", "<IN>a<IN>b<IN>"],
+    // \c before anything but a letter is a backslash, then a c, so the | after it opens an alternative that is empty
+    ["\\c|", "ab", "<IN>a<IN>b<IN>"],
+  ]) {
+    const pattern = `${alternative}|{FIXTURE_INPUT_DIR}`;
+    assert.equal(text.replace(rulePattern(pattern, inputDir), "<IN>"), normalized, pattern);
+    assert.deepEqual(normalizeProblems(rule(pattern), inputDir), [problem(`/${alternative}|\\/in/g`)], pattern);
   }
   // A pattern each of whose alternatives must match a character passes, whatever it asserts beside it,
   // and makes no match of empty text in a text that holds the characters these patterns name.
   const text = "ab cd x4 a{,2} *? k<n> aa \\c \n A";
-  for (const pattern of [
-    "\\b{FIXTURE_INPUT_DIR}x",
-    "{FIXTURE_INPUT_DIR}(?=b)b",
-    "(a)\\1{FIXTURE_INPUT_DIR}",
+  for (const alternative of [
+    "\\bx",
+    "(?=b)b",
+    "(a)\\1",
     // \12 with no group is the octal escape of a line feed; \x and \k without what completes them are an x and a k
-    "{FIXTURE_INPUT_DIR}\\12",
-    "{FIXTURE_INPUT_DIR}\\x4?",
-    "{FIXTURE_INPUT_DIR}\\k<n>",
+    "\\12",
+    "\\x4?",
+    "\\k<n>",
     // \c before anything but a letter is a backslash, then a c: the quantifier repeats the c alone
-    "\\c*{FIXTURE_INPUT_DIR}",
+    "\\c*",
     // a { that opens no quantifier, and a class, match characters
-    "{FIXTURE_INPUT_DIR}a{,2}",
-    "{FIXTURE_INPUT_DIR}[*?]",
-    "{FIXTURE_INPUT_DIR}[\\]x]+",
+    "a{,2}",
+    "[*?]",
+    "[\\]x]+",
   ]) {
-    assert.ok([...text.matchAll(rulePattern(pattern, ""))].every((m) => m[0] !== ""), pattern);
-    assert.deepEqual(normalizeProblems(rule(pattern), ""), [], pattern);
+    const pattern = `${alternative}|{FIXTURE_INPUT_DIR}`;
+    assert.ok([...text.matchAll(rulePattern(pattern, inputDir))].every((m) => m[0] !== ""), pattern);
+    assert.deepEqual(normalizeProblems(rule(pattern), inputDir), [], pattern);
+  }
+});
+
+test("normalizeProblems checks a pattern that nests more groups than the call stack holds calls", () => {
+  // The check called itself for each group, so 3,000 nested groups threw a RangeError (Maximum call stack
+  // size exceeded) out of the run before the remaining fixtures ran. The engine runs such a pattern.
+  const nested = (inner: string) => `${"(?:".repeat(100_000)}${inner}${")".repeat(100_000)}`;
+  const rule = (pattern: string) => ({ normalize: [{ kind: "replace_regex" as const, pattern, replacement: "<IN>" }] });
+  assert.deepEqual(normalizeProblems(rule(`${nested("x")}{FIXTURE_INPUT_DIR}`), "/in"), []);
+  const emptyAlternative = `${nested("x?")}|{FIXTURE_INPUT_DIR}`;
+  assert.equal("ab".replace(rulePattern(emptyAlternative, "/in"), "<IN>"), "<IN>a<IN>b<IN>");
+  const problems = normalizeProblems(rule(emptyAlternative), "/in");
+  assert.equal(problems.length, 1, problems.join("\n").slice(0, 400));
+  assert.ok(
+    problems[0].startsWith(`normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for the input directory: /${nested("x?")}|\\/in/g`),
+    problems[0].slice(0, 400),
+  );
+});
+
+test("normalizeProblems names a pattern the engine accepts but cannot compile when it runs it", () => {
+  // new RegExp accepts these, and the engine throws "Regular expression too large" the first time it runs
+  // one, out of the check or out of the run when the first output was normalized, before the remaining
+  // fixtures ran. Characters wider than Latin-1 compile on text of one-byte characters and throw only on
+  // text with a wider one.
+  const rule = (pattern: string) => ({ normalize: [{ kind: "replace_regex" as const, pattern, replacement: "<IN>" }] });
+  const wide = String.fromCharCode(0x100);
+  for (const [pattern, fixtureInputDir, standingFor] of [
+    [`${"x".repeat(100_000)}{FIXTURE_INPUT_DIR}`, "/in", " with {FIXTURE_INPUT_DIR} standing for the input directory"],
+    ["x".repeat(100_000), "", ""],
+    [wide.repeat(40_000), "", ""],
+  ]) {
+    assert.doesNotThrow(() => rulePattern(pattern, fixtureInputDir));
+    const problems = normalizeProblems(rule(pattern), fixtureInputDir);
+    assert.equal(problems.length, 1, `${pattern.slice(0, 20)}: ${problems.length} problems`);
+    const head = `normalize rule 1 (replace_regex) pattern is not a regular expression${standingFor}: Invalid regular expression: /`;
+    assert.ok(problems[0].startsWith(head) && problems[0].endsWith("/g: Regular expression too large"), `${problems[0].slice(0, 200)}...${problems[0].slice(-60)}`);
   }
 });
 
@@ -735,8 +798,8 @@ test("normalizeProblems passes a pattern that can match empty text where its rep
   assert.equal(`ab ${inputDir}`.replace(rulePattern("({FIXTURE_INPUT_DIR})?", inputDir), ""), "ab ");
   assert.deepEqual(normalizeProblems(rule("({FIXTURE_INPUT_DIR})?"), inputDir), []);
   assert.deepEqual(normalizeProblems(rule("{FIXTURE_INPUT_DIR}"), inputDir), []);
-  assert.equal("ab cd".replace(rulePattern("\\b{FIXTURE_INPUT_DIR}", ""), ""), "ab cd");
-  assert.deepEqual(normalizeProblems(rule("\\b{FIXTURE_INPUT_DIR}"), ""), []);
+  assert.equal("ab cd".replace(rulePattern("\\b|{FIXTURE_INPUT_DIR}", inputDir), ""), "ab cd");
+  assert.deepEqual(normalizeProblems(rule("\\b|{FIXTURE_INPUT_DIR}"), inputDir), []);
 });
 
 // The contract of a passing kind: package-name stub fixture, with any of its fields replaced.
@@ -797,7 +860,8 @@ console.log(JSON.stringify({ score: 7, args: process.argv.slice(2) }));
     const dirs = { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") };
     const rc = runFixture(name, bins, dirs);
     const capturePath = join(dirs.actual, name, "hma.json");
-    const args: unknown = lstatSync(capturePath, { throwIfNoEntry: false })?.isFile() ? JSON.parse(readFileSync(capturePath, "utf8")).args : undefined;
+    // existsSync, since looking up a path under a file throws ENOTDIR whatever throwIfNoEntry says
+    const args: unknown = existsSync(capturePath) && lstatSync(capturePath).isFile() ? JSON.parse(readFileSync(capturePath, "utf8")).args : undefined;
     const alone = { rc, logged: [...logged], runs: Number(readFileSync(counter, "utf8")), args };
     logged.length = 0;
     const failed = runFixtures([name, "valid"], bins, dirs);
@@ -812,8 +876,12 @@ console.log(JSON.stringify({ score: 7, args: process.argv.slice(2) }));
 // Each contract below stopped the run with an error thrown out of runFixture, so no later fixture ran,
 // or passed its fixture, as its entry comment says: with nothing run or compared (a participants list
 // that names no CLI), or with hma run and `score` compared and found equal (`kind: dir`,
-// `participants: [hma, hma]` and a pattern of {FIXTURE_INPUT_DIR} alone or in a group). `problem` is the line the load
-// check prints for it after `[<fixture>] contract.yaml `, or a pattern where the line holds a temporary path.
+// `participants: [hma, hma]` and each pattern that holds {FIXTURE_INPUT_DIR} and can match empty text
+// or delete every string value). `problem` is the line the load check prints for it after
+// `[<fixture>] contract.yaml `, or a pattern for the whole line where it holds a temporary path or a
+// pattern too long to write out.
+const HOLDS_INPUT_DIR =
+  "normalize rule 1 (replace_regex) pattern holds {FIXTURE_INPUT_DIR}, but a kind: package-name fixture has no input directory for it to stand for";
 const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; problem: string | RegExp }[] = [
   {
     // TypeError: Cannot convert object to primitive value
@@ -830,11 +898,10 @@ const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; pro
   },
   {
     // SyntaxError: Invalid regular expression: /*/g: Nothing to repeat, thrown after the CLI had run
-    title: "a pattern that is not a regular expression with the empty string a kind: package-name fixture puts in place of {FIXTURE_INPUT_DIR}",
+    title: "the pattern {FIXTURE_INPUT_DIR}* in a kind: package-name fixture, which has no input directory, where it was *",
     name: "star-after-no-dir",
     contract: stubContract({ normalize: 'normalize: [{ kind: replace_regex, pattern: "{FIXTURE_INPUT_DIR}*", replacement: "" }]' }),
-    problem:
-      "normalize rule 1 (replace_regex) pattern is not a regular expression with {FIXTURE_INPUT_DIR} standing for an empty string: Invalid regular expression: /*/g: Nothing to repeat",
+    problem: HOLDS_INPUT_DIR,
   },
   {
     // SyntaxError: ... Range out of order in character class, thrown after the CLI had run
@@ -846,27 +913,52 @@ const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; pro
   },
   {
     // ran hma with an empty regular expression, which matches at every position of every string, and returned 0
-    title: "a pattern that is empty with the empty string a kind: package-name fixture puts in place of {FIXTURE_INPUT_DIR}",
+    title: "the pattern {FIXTURE_INPUT_DIR} in a kind: package-name fixture, which has no input directory, where it was empty",
     name: "only-no-dir",
     contract: stubContract({ normalize: 'normalize: [{ kind: replace_regex, pattern: "{FIXTURE_INPUT_DIR}", replacement: "<IN>" }]' }),
-    problem:
-      "normalize rule 1 (replace_regex) pattern is empty with {FIXTURE_INPUT_DIR} standing for an empty string, so it would match at every position of every string",
+    problem: HOLDS_INPUT_DIR,
   },
   {
-    // ran hma with (?:), which is not empty and matches at every position of every string, and returned 0
-    title: "a pattern that matches the empty string with the empty string a kind: package-name fixture puts in place of {FIXTURE_INPUT_DIR}",
-    name: "group-of-no-dir",
-    contract: stubContract({ normalize: 'normalize: [{ kind: replace_regex, pattern: "(?:{FIXTURE_INPUT_DIR})", replacement: "<IN>" }]' }),
-    problem:
-      "normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for an empty string: /(?:)/g would insert the replacement where it matched no text",
+    // ran hma with .*, which deleted every string value, and returned 0
+    title: "the pattern {FIXTURE_INPUT_DIR}.* with an empty replacement in a kind: package-name fixture, which has no input directory",
+    name: "rest-of-no-dir",
+    contract: stubContract({ normalize: 'normalize: [{ kind: replace_regex, pattern: "{FIXTURE_INPUT_DIR}.*", replacement: "" }]' }),
+    problem: HOLDS_INPUT_DIR,
   },
   {
-    // ran hma with \b, which matches empty text next to each word, and returned 0
-    title: "a pattern that matches empty text only next to a character with the empty string a kind: package-name fixture puts in place of {FIXTURE_INPUT_DIR}",
-    name: "boundary-of-no-dir",
-    contract: stubContract({ normalize: 'normalize: [{ kind: replace_regex, pattern: "\\\\b{FIXTURE_INPUT_DIR}", replacement: "<IN>" }]' }),
+    // ran hma with an optional input directory, which matches at every position of every string, and returned 0
+    title: "a pattern that matches the empty string with the input directory a directory fixture puts in place of {FIXTURE_INPUT_DIR}",
+    name: "optional-dir",
+    contract: stubContract({ kind: "kind: directory", normalize: 'normalize: [{ kind: replace_regex, pattern: "({FIXTURE_INPUT_DIR})?", replacement: "<IN>" }]' }),
     problem:
-      "normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for an empty string: /\\b/g would insert the replacement where it matched no text",
+      /^\[optional-dir\] contract\.yaml normalize rule 1 \(replace_regex\) pattern can match empty text with \{FIXTURE_INPUT_DIR\} standing for the input directory: \/\(.*\\\/optional-dir\\\/input\)\?\/g would insert the replacement where it matched no text$/,
+  },
+  {
+    // ran hma with \b beside the input directory, which matches empty text next to each word, and returned 0
+    title: "a pattern with an alternative that matches empty text only next to a character, beside {FIXTURE_INPUT_DIR} in a directory fixture",
+    name: "boundary-or-dir",
+    contract: stubContract({ kind: "kind: directory", normalize: 'normalize: [{ kind: replace_regex, pattern: "\\\\b|{FIXTURE_INPUT_DIR}", replacement: "<IN>" }]' }),
+    problem:
+      /^\[boundary-or-dir\] contract\.yaml normalize rule 1 \(replace_regex\) pattern can match empty text with \{FIXTURE_INPUT_DIR\} standing for the input directory: \/\\b\|.*\\\/boundary-or-dir\\\/input\/g would insert the replacement where it matched no text$/,
+  },
+  {
+    // RangeError: Maximum call stack size exceeded, thrown by the check itself
+    title: "a pattern that nests 100,000 groups and can match empty text, beside {FIXTURE_INPUT_DIR} in a directory fixture",
+    name: "deep-or-dir",
+    contract: stubContract({
+      kind: "kind: directory",
+      normalize: `normalize: [{ kind: replace_regex, pattern: "${"(?:".repeat(100_000)}x?${")".repeat(100_000)}|{FIXTURE_INPUT_DIR}", replacement: "<IN>" }]`,
+    }),
+    problem:
+      /^\[deep-or-dir\] contract\.yaml normalize rule 1 \(replace_regex\) pattern can match empty text with \{FIXTURE_INPUT_DIR\} standing for the input directory: \/(?:\(\?:){100000}x\?\){100000}\|.*\\\/deep-or-dir\\\/input\/g would insert the replacement where it matched no text$/,
+  },
+  {
+    // SyntaxError: Invalid regular expression: /x.../g: Regular expression too large, thrown after the CLI had run
+    title: "a pattern the engine accepts and cannot compile when it runs it",
+    name: "too-large",
+    contract: stubContract({ normalize: `normalize: [{ kind: replace_regex, pattern: "${"x".repeat(100_000)}", replacement: "<IN>" }]` }),
+    problem:
+      /^\[too-large\] contract\.yaml normalize rule 1 \(replace_regex\) pattern is not a regular expression: Invalid regular expression: \/x{100000}\/g: Regular expression too large$/,
   },
   {
     // YAMLParseError, as are the next two
@@ -1020,44 +1112,94 @@ for (const { title, name, golden, reason, skip } of UNREADABLE_GOLDENS) {
   });
 }
 
-test("runFixtures fails the leg of a participant whose golden is a FIFO, runs no CLI for it, and runs the next fixture", { skip: process.platform === "win32" ? "mkfifo makes no FIFO on Windows" : undefined }, () => {
-  // Opening a FIFO to read it waits for a program to write to it, so a golden that was one held the run
-  // before any later leg or fixture ran. The fixtures run in a child process, so a run that waits on the
-  // FIFO fails this test on the timeout instead of holding the test run too.
-  const dir = mkdtempSync(join(tmpdir(), "parity-fifo-"));
-  try {
-    const stub = join(dir, "stub.mjs");
-    writeFileSync(stub, "console.log(JSON.stringify({ score: 7 }));\n");
-    for (const name of ["fifo-golden", "valid"]) {
-      const fixture = join(dir, "fixtures", name);
-      mkdirSync(join(fixture, "expected"), { recursive: true });
-      writeFileSync(join(fixture, "contract.yaml"), stubContract());
-      for (const cli of ["opena2a", "ai-trust"]) writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+// Each path below is a FIFO. Opening one to read it waits for a program to write to it, and opening one
+// to write to it waits for a program to read from it, so a golden or a capture that was one held the run
+// before any later leg or fixture ran; a contract.yaml or a skip sentinel that is one is read only after
+// its type is looked up, as README.md "Contract model" says. The fixtures run in a child process, so a
+// run that waits on the FIFO fails its test on the timeout instead of holding the test run too. `fifo`
+// is where the FIFO is made, `report` what the run prints on standard error for it, and `runs` how many
+// times the fixture runs its CLI.
+const FIFOS: {
+  title: string;
+  name: string;
+  fifo: (fixtureDir: string, actualDir: string) => string;
+  report: (fifo: string) => string[];
+  runs: number;
+}[] = [
+  {
+    title: "the leg of a participant whose golden is a FIFO, runs no CLI for it,",
+    name: "fifo-golden",
+    fifo: (fixtureDir) => join(fixtureDir, "expected", "hma.json"),
+    report: (fifo) => [`[FAIL] fifo-golden × hma: the golden at ${fifo} is a FIFO, not a file`],
+    runs: 0,
+  },
+  {
+    title: "a fixture whose contract.yaml is a FIFO, before running a CLI,",
+    name: "fifo-contract",
+    fifo: (fixtureDir) => join(fixtureDir, "contract.yaml"),
+    report: () => ["[fifo-contract] contract.yaml is a FIFO, not a file"],
+    runs: 0,
+  },
+  {
+    title: "a fixture whose skip sentinel is a FIFO",
+    name: "fifo-sentinel",
+    fifo: (fixtureDir) => join(fixtureDir, "expected", "opena2a.skip"),
+    report: (fifo) => [
+      `[FAIL] fifo-sentinel × opena2a: the skip sentinel at ${fifo} is a FIFO, not a file`,
+      `  Make expected/opena2a.skip a file that says why opena2a does not exercise this fixture (README.md "Contract model").`,
+    ],
+    runs: 1,
+  },
+  {
+    title: "the leg of a participant whose capture path is a FIFO",
+    name: "fifo-capture",
+    fifo: (_fixtureDir, actualDir) => join(actualDir, "fifo-capture", "hma.json"),
+    report: (fifo) => [`[FAIL] fifo-capture × hma: the capture at ${fifo} is a FIFO, not a file`],
+    runs: 1,
+  },
+];
+
+for (const { title, name, fifo: fifoPath, report, runs } of FIFOS) {
+  test(`runFixtures fails ${title} and runs the next fixture`, { skip: process.platform === "win32" ? "mkfifo makes no FIFO on Windows" : undefined }, () => {
+    const dir = mkdtempSync(join(tmpdir(), "parity-fifo-"));
+    try {
+      const counter = join(dir, "n");
+      const stub = join(dir, "stub.mjs");
+      writeFileSync(counter, "");
+      writeFileSync(stub, `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(counter)}, ".");\nconsole.log(JSON.stringify({ score: 7 }));\n`);
+      for (const fixtureName of [name, "valid"]) {
+        const fixture = join(dir, "fixtures", fixtureName);
+        mkdirSync(join(fixture, "expected"), { recursive: true });
+        writeFileSync(join(fixture, "contract.yaml"), stubContract());
+        writeFileSync(join(fixture, "expected", "hma.json"), JSON.stringify({ score: 7 }));
+        for (const cli of ["opena2a", "ai-trust"]) writeFileSync(join(fixture, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+      }
+      const fifo = fifoPath(join(dir, "fixtures", name), join(dir, "actual"));
+      mkdirSync(dirname(fifo), { recursive: true });
+      rmSync(fifo, { force: true });
+      execFileSync("mkfifo", [fifo]);
+      const script = [
+        `import { runFixtures } from ${JSON.stringify(pathToFileURL(join(repoRoot, "src", "run-parity.ts")).href)};`,
+        `const bins = { hma: ${JSON.stringify(`node ${stub}`)}, opena2a: "unused", "ai-trust": "unused" };`,
+        `const dirs = { fixtures: ${JSON.stringify(join(dir, "fixtures"))}, actual: ${JSON.stringify(join(dir, "actual"))} };`,
+        `console.log("failed=" + runFixtures([${JSON.stringify(name)}, "valid"], bins, dirs));`,
+      ].join("\n");
+      const r = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], { encoding: "utf8", timeout: 15_000 });
+      assert.equal(r.signal, null, `the run waited on the FIFO until it was stopped\n${r.stdout}${r.stderr}`);
+      assert.equal(r.stderr.trim(), report(fifo).join("\n"));
+      assert.match(r.stdout, /^\[OK\] {3}valid × hma:/m);
+      assert.match(r.stdout, /^failed=1$/m);
+      assert.equal(readFileSync(counter, "utf8").length, runs + 1, "the fixture ran its CLI that many times, and the valid fixture once");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-    const fifo = join(dir, "fixtures", "fifo-golden", "expected", "hma.json");
-    execFileSync("mkfifo", [fifo]);
-    writeFileSync(join(dir, "fixtures", "valid", "expected", "hma.json"), JSON.stringify({ score: 7 }));
-    const script = [
-      `import { runFixtures } from ${JSON.stringify(pathToFileURL(join(repoRoot, "src", "run-parity.ts")).href)};`,
-      `const bins = { hma: ${JSON.stringify(`node ${stub}`)}, opena2a: "unused", "ai-trust": "unused" };`,
-      `const dirs = { fixtures: ${JSON.stringify(join(dir, "fixtures"))}, actual: ${JSON.stringify(join(dir, "actual"))} };`,
-      `console.log("failed=" + runFixtures(["fifo-golden", "valid"], bins, dirs));`,
-    ].join("\n");
-    const r = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], { encoding: "utf8", timeout: 15_000 });
-    assert.equal(r.signal, null, `the run waited on the FIFO until it was stopped\n${r.stdout}${r.stderr}`);
-    assert.equal(r.stderr.trim(), `[FAIL] fifo-golden × hma: the golden at ${fifo} is a FIFO, not a file`);
-    assert.match(r.stdout, /^\[OK\] {3}valid × hma:/m);
-    assert.match(r.stdout, /^failed=1$/m);
-    assert.equal(existsSync(join(dir, "actual", "fifo-golden", "hma.json")), false, "the fixture ran its CLI");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+  });
+}
 
 // Each file below stopped the run with the error thrown out of runFixture, so the valid fixture after it
-// did not run: a contract.yaml or a skip sentinel that is not a file or cannot be opened, and a capture
-// that cannot be written. `line` is what the fixture's own run prints for it, `rc` what that run returns and
-// `runs` how many times it runs the CLI.
+// did not run, unless its entry comment says otherwise: a contract.yaml or a skip sentinel that is not a
+// file or cannot be opened, and a capture that cannot be written. `line` is what the fixture's own run
+// prints for it, `rc` what that run returns and `runs` how many times it runs the CLI.
 const replaceWithDirectory = (path: string) => {
   rmSync(path);
   mkdirSync(path);
@@ -1110,10 +1252,61 @@ const UNREADABLE_FILES: {
     name: "directory-capture",
     arrange: (_fixtureDir, actualDir) => mkdirSync(join(actualDir, "directory-capture", "hma.json"), { recursive: true }),
     rc: 1,
-    line: /^\n\[FAIL\] directory-capture × hma: the capture could not be written at .*\/directory-capture\/hma\.json \(EISDIR on open\)$/,
+    line: /^\n\[FAIL\] directory-capture × hma: the capture at .*\/directory-capture\/hma\.json is a directory, not a file$/,
     runs: 1,
   },
+  {
+    // the directory its captures go in is made inside the try that fails the leg
+    title: "whose directory for captures is a file",
+    name: "file-capture-dir",
+    arrange: (_fixtureDir, actualDir) => {
+      mkdirSync(actualDir, { recursive: true });
+      writeFileSync(join(actualDir, "file-capture-dir"), "");
+    },
+    rc: 1,
+    line: /^\n\[FAIL\] file-capture-dir × hma: the capture could not be written at .*\/file-capture-dir\/hma\.json \(EEXIST on mkdir\)$/,
+    runs: 1,
+  },
+  {
+    // reported as missing, and left out of `npm run parity` (see fixtureNames)
+    title: "whose contract.yaml is a symbolic link to no file",
+    name: "dangling-contract",
+    arrange: (fixtureDir) => {
+      rmSync(join(fixtureDir, "contract.yaml"));
+      symlinkSync("missing.yaml", join(fixtureDir, "contract.yaml"));
+    },
+    rc: 2,
+    line: /^\[dangling-contract\] contract\.yaml could not be read \(ENOENT on stat\)$/,
+    runs: 0,
+  },
+  {
+    title: "whose contract.yaml is a symbolic link to itself",
+    name: "looping-contract",
+    arrange: (fixtureDir) => {
+      rmSync(join(fixtureDir, "contract.yaml"));
+      symlinkSync("contract.yaml", join(fixtureDir, "contract.yaml"));
+    },
+    rc: 2,
+    line: /^\[looping-contract\] contract\.yaml could not be read \(ELOOP on stat\)$/,
+    runs: 0,
+  },
 ];
+
+test("fixtureNames lists each fixture with a contract.yaml, a symbolic link that dangles or loops included", () => {
+  // existsSync follows the link, so `npm run parity` left such a fixture out without a line and counted
+  // one fixture fewer in its summary; runFixture fails it as a contract.yaml it cannot read.
+  const dir = mkdtempSync(join(tmpdir(), "parity-names-"));
+  try {
+    for (const name of ["file", "dangling", "looping", "no-contract"]) mkdirSync(join(dir, name));
+    writeFileSync(join(dir, "file", "contract.yaml"), stubContract());
+    symlinkSync("missing.yaml", join(dir, "dangling", "contract.yaml"));
+    symlinkSync("contract.yaml", join(dir, "looping", "contract.yaml"));
+    writeFileSync(join(dir, "README.md"), "not a fixture");
+    assert.deepEqual(fixtureNames(dir).sort(), ["dangling", "file", "looping"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 for (const { title, name, arrange, rc, line, runs, skip } of UNREADABLE_FILES) {
   test(`runFixtures fails a fixture ${title} and runs the next fixture`, { skip }, () => {
