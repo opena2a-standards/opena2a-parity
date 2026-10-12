@@ -65,13 +65,20 @@ list or mapping, a `participants` entry that names no CLI, and a `normalize` rul
 `path` or a `pattern` that is empty or not a regular expression with what the fixture puts in
 place of `{FIXTURE_INPUT_DIR}`: in a `kind: package-name` fixture `{FIXTURE_INPUT_DIR}*` is `*`,
 which is not one, and `{FIXTURE_INPUT_DIR}` alone is empty, which would match at every position
-of every string. So does a `pattern` that holds `{FIXTURE_INPUT_DIR}` and matches the empty string
-with that value: there `(?:{FIXTURE_INPUT_DIR})` is `(?:)`, which is not empty and matches at every
-position of every string too, and `({FIXTURE_INPUT_DIR})?` matches the empty string in any fixture.
+of every string. So does a `pattern` that holds `{FIXTURE_INPUT_DIR}` and can match empty text
+with that value, unless its `replacement` is empty, which inserts nothing: there
+`(?:{FIXTURE_INPUT_DIR})` is `(?:)`, which is not empty and matches at every position of every
+string too, `\b{FIXTURE_INPUT_DIR}` is `\b`, which matches empty text next to each word, and
+`({FIXTURE_INPUT_DIR})?` matches the empty string in any fixture. An assertion (`^`, `$`, `\b`,
+`\B` or a lookaround) counts as able to match empty text whatever it asserts.
 
-A golden that is not valid JSON, or that cannot be read (a directory, or a file without read
-permission), fails its participant's leg without running that CLI, and the run goes on to the
-remaining legs and fixtures.
+A golden that is not valid JSON, that is not a file (a directory or a FIFO), or that cannot be
+opened (a file without read permission, or a symbolic link that dangles or loops) fails its
+participant's leg without running that CLI, and the run goes on to the remaining legs and
+fixtures. A `contract.yaml` that is a directory, a FIFO or a file without read permission fails
+its fixture before any CLI runs, a skip sentinel that is one of those fails its fixture as an empty
+one does, and a capture that cannot be written (its path under `actual/` is a directory) fails its
+participant's leg.
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 

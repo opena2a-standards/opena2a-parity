@@ -847,6 +847,25 @@ may_differ: []
   assert.ok(r.logged.includes("[OK]   stub × hma: 2 must-match fields equal apart from object key order"), r.logged.join("\n"));
 });
 
+test("runFixture throws an error from the golden reader that names no system call instead of failing the leg on it", () => {
+  // Only an error the operating system returned for a call is taken for a golden that cannot be read.
+  // A TypeError from a mistake in the harness, or an error that carries a code and no call, is not.
+  for (const err of [new TypeError("Cannot read properties of undefined (reading 'score')"), Object.assign(new Error("not a system error"), { code: "EISDIR" })]) {
+    const readGolden: GoldenReader = () => {
+      throw err;
+    };
+    assert.throws(() => runStubFixture(contractWithKeys(["findings.0.checkId"]), UNRESOLVED_KEY_GOLDEN, UNRESOLVED_KEY_PAYLOAD, 0, undefined, undefined, readGolden), (thrown) => thrown === err);
+  }
+  // The same reader throwing an error that names its call fails the leg and does not throw.
+  const readGolden: GoldenReader = () => {
+    throw Object.assign(new Error("EACCES: permission denied, open"), { code: "EACCES", syscall: "open" });
+  };
+  const r = runStubFixture(contractWithKeys(["findings.0.checkId"]), UNRESOLVED_KEY_GOLDEN, UNRESOLVED_KEY_PAYLOAD, 0, undefined, undefined, readGolden);
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.equal(r.invocations, 0, r.logged.join("\n"));
+  assert.match(r.logged.join("\n"), /\[FAIL\] stub × hma: the golden at .*hma\.json could not be read \(EACCES on open\)/);
+});
+
 test("runFixture compares a must-match key that indexes an array with a numeric segment", () => {
   const r = runStubFixture(contractWithKeys(["findings.0.checkId"]), UNRESOLVED_KEY_GOLDEN, UNRESOLVED_KEY_PAYLOAD, 0);
   assert.equal(r.rc, 1);
