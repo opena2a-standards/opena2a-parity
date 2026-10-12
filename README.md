@@ -36,8 +36,8 @@ fixtures/
 
 `contract.yaml` per fixture. Fields:
 
-- `exercises` — which CLI commands the fixture runs
-- `participants` — list of CLIs for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture, and so does an empty sentinel
+- `exercises` — which CLI commands the fixture runs, a mapping from each participant to its command string
+- `participants` — list of CLIs (`hma`, `opena2a`, `ai-trust`) for which a golden exists. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture, and so does an empty sentinel
 - `must_match` — list of keys equal across participating CLIs apart from object key order. A key is
   a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
   `findings[0].checkId`). A key that resolves in no participant's golden fails the fixture, since it
@@ -48,7 +48,19 @@ fixtures/
 - `may_differ` — list of `{ path, reason }` entries naming keys per-CLI variation is allowed on.
   The harness fails the fixture before running any CLI if an entry has no `reason`, or if its
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
-- `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs)
+- `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs).
+  A rule is `strip_key` with a `path`, or `replace_regex` with a `pattern` (a regular expression,
+  where the first `{FIXTURE_INPUT_DIR}` stands for the fixture's input directory, or for an empty
+  string in a `kind: package-name` fixture, which has none) and a `replacement`
+
+A contract that is not a mapping fails the fixture before any CLI runs, and the run goes on to the
+next fixture. So do an `exercises` that is not a mapping or that maps a CLI to a number, list or
+mapping, a `participants` entry that names no CLI, and a `normalize` rule with a numeric `path` or
+a `pattern` that is not a regular expression with `input` in place of `{FIXTURE_INPUT_DIR}`. A
+contract can still stop the run with an error instead, for example with a `must_match` entry that
+is a mapping with a `toString` key, or with a `pattern` that is a regular expression with `input`
+there but not with what the fixture puts there, such as `{FIXTURE_INPUT_DIR}*` in a
+`kind: package-name` fixture.
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 
