@@ -38,9 +38,10 @@ fixtures/
 
 - `kind` — `directory` (the default) or `package-name`. A `directory` fixture has an `input/`
   directory, and each command is run with its path as the last argument. A `package-name` fixture
-  has none: `{PACKAGE}` in a command stands for the contract's `package`, a string. Any other
-  `kind`, and a `package` that is not a string, fail the fixture before any CLI runs
-- `exercises` — which CLI commands the fixture runs, a mapping from each participant to its command string
+  has none: every `{PACKAGE}` in a command stands for the contract's `package`, a string. Any other
+  `kind` fails the fixture before any CLI runs, and so does a `package` that is not a string in a
+  `package-name` fixture; a `directory` fixture does not read `package`
+- `exercises` — which CLI commands the fixture runs, a mapping from each participant to its command string, where every `{BIN}` stands for the command that runs that CLI (`HMA_BIN`, `OPENA2A_BIN` or `AI_TRUST_BIN`)
 - `participants` — list of CLIs (`hma`, `opena2a`, `ai-trust`) for which a golden exists, each listed once. Every other CLI is skipped and needs a sentinel file, `expected/<cli>.skip`, saying why it does not exercise the fixture; a CLI that is neither a participant nor covered by a sentinel fails the fixture, and so does an empty sentinel. A list that names no CLI would run and compare nothing, and fails the fixture before any CLI runs, as does a CLI listed twice
 - `must_match` — list of keys equal across participating CLIs apart from object key order. A key is
   a dot-separated path, with a numeric segment for an array index (`findings.0.checkId`, not
@@ -61,9 +62,13 @@ A `contract.yaml` that is not one valid YAML document (a syntax error, a second 
 repeated key) or that is not a mapping fails the fixture before any CLI runs, and the run goes on
 to the next fixture. So do an `exercises` that is not a mapping or that maps a CLI to a number,
 list or mapping, a `participants` entry that names no CLI, and a `normalize` rule with a numeric
-`path` or a `pattern` that is not a regular expression with what the fixture puts in place of
-`{FIXTURE_INPUT_DIR}`: `{FIXTURE_INPUT_DIR}*` in a `kind: package-name` fixture is `*`, which is
-not one.
+`path` or a `pattern` that is empty or not a regular expression with what the fixture puts in
+place of `{FIXTURE_INPUT_DIR}`: in a `kind: package-name` fixture `{FIXTURE_INPUT_DIR}*` is `*`,
+which is not one, and `{FIXTURE_INPUT_DIR}` alone is empty, which would match at every position
+of every string.
+
+A golden that is not valid JSON fails its participant's leg without running that CLI, and the
+run goes on to the remaining legs and fixtures.
 
 See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 
