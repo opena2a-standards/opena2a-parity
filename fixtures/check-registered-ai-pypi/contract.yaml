@@ -37,8 +37,7 @@ must_match:
   # scanStatus: compared for all three CLIs. ai-trust emits it on the
   # registry-path `check --json` output since ai-trust#105, so its golden
   # carries it like the hma and opena2a goldens. Before that change ai-trust
-  # left it out of that output (ai-trust#61, ai-trust#191) and its golden
-  # omitted the key.
+  # left it out of that output (ai-trust#61) and its golden omitted the key.
   - scanStatus
 
 may_differ:
