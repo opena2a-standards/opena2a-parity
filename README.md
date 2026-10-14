@@ -88,8 +88,7 @@ See `fixtures/secure-dirty-skill/contract.yaml` for the first fixture.
 A `must_match` key is checked twice. Each CLI's output is compared with that CLI's own golden,
 and then the CLIs are compared with each other: the goldens of the participating CLIs, and their
 outputs, hold the same value for the key. A CLI whose golden omits a key is left out of that
-key's comparison between CLIs (ai-trust's `scanStatus` on `check-registered-ai`), and its output
-must omit the key too. A fixture whose goldens disagree on a `must_match` key fails even when
+key's comparison between CLIs, and its output must omit the key too. A fixture whose goldens disagree on a `must_match` key fails even when
 every CLI matches its own golden. If the CLIs differ on purpose, move the key from `must_match`
 to `may_differ`, with the reason.
 

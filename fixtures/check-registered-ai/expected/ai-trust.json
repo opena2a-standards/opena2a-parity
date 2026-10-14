@@ -2,6 +2,7 @@
   "found": true,
   "name": "@modelcontextprotocol/server-filesystem",
   "packageType": "mcp_server",
+  "scanStatus": "warnings",
   "source": "registry",
   "trustLevel": 3,
   "trustScore": 0.824,
