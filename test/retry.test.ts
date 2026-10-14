@@ -302,19 +302,19 @@ test("runFixture fails the leg when a reworded error still differs from the gold
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
 });
 
-test("README.md states the number of times an unexpected error is run, as the harness runs it", () => {
+test("docs/contract-model.md states the number of times an unexpected error is run, as the harness runs it", () => {
   // "tried up to N times" is N runs; "retried up to N times" is the first run plus N retries
-  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8").replace(/\s+/g, " ");
-  const claim = readme.match(/An error the golden does not record is (tried|retried) up to (\w+) times/);
-  assert.ok(claim, "README.md no longer states how often an unexpected error is run");
+  const doc = readFileSync(new URL("../docs/contract-model.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+  const claim = doc.match(/An error the golden does not record is (tried|retried) up to (\w+) times/);
+  assert.ok(claim, "docs/contract-model.md no longer states how often an unexpected error is run");
   const words: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5 };
   const n = words[claim[2]] ?? Number(claim[2]);
   const promisedRuns = claim[1] === "tried" ? n : n + 1;
   const reworded = { ...NOT_FOUND_GOLDEN, error: 'No package named "ghost" on npm.' };
   const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, reworded);
-  assert.equal(r.invocations, promisedRuns, `README.md says "${claim[0]}"`);
+  assert.equal(r.invocations, promisedRuns, `docs/contract-model.md says "${claim[0]}"`);
   // a retry count in parentheses, if given, is the runs after the first
-  const retries = readme.match(/An error the golden does not record is tried up to \w+ times \((\w+) retr(?:y|ies)\)/);
+  const retries = doc.match(/An error the golden does not record is tried up to \w+ times \((\w+) retr(?:y|ies)\)/);
   if (retries) assert.equal(words[retries[1]] ?? Number(retries[1]), r.invocations - 1, retries[0]);
 });
 
@@ -338,11 +338,11 @@ test("the unexpected-error report offers re-baselining as a conditional, not a v
   }
 });
 
-test("README.md and the retry comment give a reworded error the report's two outcomes: re-baseline if intended, CLI regression if not", () => {
+test("docs/contract-model.md and the retry comment give a reworded error the report's two outcomes: re-baseline if intended, CLI regression if not", () => {
   const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
   // the sentences wrap across lines, and the source one across comment lines, so read each as one line
   const docs = [
-    ["README.md", read("README.md").replace(/\s+/g, " ")],
+    ["docs/contract-model.md", read("docs/contract-model.md").replace(/\s+/g, " ")],
     ["src/run-parity.ts", read("src/run-parity.ts").replace(/\n\s*\/\/ ?/g, " ").replace(/\s+/g, " ")],
   ] as const;
   for (const [path, text] of docs) {
@@ -386,10 +386,10 @@ test("runFixture reports hackmyagent's unreachable-registry payload, which carri
   assert.ok(!r.logged.some((l) => l.startsWith("[OK]")), r.logged.join("\n"));
 });
 
-test("README.md and the retry comment name the CLI whose registry timeout carries the not-found keys, and the one whose does not", () => {
+test("docs/contract-model.md and the retry comment name the CLI whose registry timeout carries the not-found keys, and the one whose does not", () => {
   const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
   const docs = [
-    ["README.md", read("README.md").replace(/\s+/g, " ")],
+    ["docs/contract-model.md", read("docs/contract-model.md").replace(/\s+/g, " ")],
     ["src/run-parity.ts", read("src/run-parity.ts").replace(/\n\s*\/\/ ?/g, " ").replace(/\s+/g, " ")],
   ] as const;
   for (const [path, text] of docs) {

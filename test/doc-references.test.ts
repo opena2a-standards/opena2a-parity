@@ -79,14 +79,22 @@ export function unreadableCitations(text: string, citingFile: string, checkIds: 
   return found;
 }
 
+// README.md and the pages it moved its reference text to: CONTRIBUTING.md and docs/*.md.
+function documentPages(): string[] {
+  const docs = readdirSync(join(repoRoot, "docs"))
+    .filter((name) => name.endsWith(".md"))
+    .map((name) => join(repoRoot, "docs", name));
+  return [join(repoRoot, "README.md"), join(repoRoot, "CONTRIBUTING.md"), ...docs];
+}
+
 function citingFiles(): string[] {
   const contracts = readdirSync(join(repoRoot, "fixtures"))
     .map((fixture) => join(repoRoot, "fixtures", fixture, "contract.yaml"))
     .filter((path) => existsSync(path));
-  return [join(repoRoot, "README.md"), ...contracts];
+  return [...documentPages(), ...contracts];
 }
 
-test("README.md and every fixture contract cite only what a reader of this repository can open", () => {
+test("README.md, the pages it links and every fixture contract cite only what a reader of this repository can open", () => {
   const checkIds = goldenCheckIds();
   const files = citingFiles();
   assert.ok(files.length > 1, "expected README.md and at least one fixtures/*/contract.yaml");
@@ -201,12 +209,14 @@ export function unconditionalBlockClaims(text: string): string[] {
     .filter((sentence) => !(sentence.includes("`parity / parity`") && /\brequire/.test(sentence)));
 }
 
-test("README.md says a parity failure blocks a PR only where `parity / parity` is a required check", () => {
-  assert.deepEqual(
-    unconditionalBlockClaims(readFileSync(join(repoRoot, "README.md"), "utf8")),
-    [],
-    "Say the PR gets a failing check, and that it is blocked only where `parity / parity` is required.",
-  );
+test("README.md and the pages it links say a parity failure blocks a PR only where `parity / parity` is a required check", () => {
+  for (const page of documentPages()) {
+    assert.deepEqual(
+      unconditionalBlockClaims(readFileSync(page, "utf8")),
+      [],
+      `${relative(repoRoot, page)}: Say the PR gets a failing check, and that it is blocked only where \`parity / parity\` is required.`,
+    );
+  }
 });
 
 test("a sentence that fails or blocks a PR unconditionally is reported; one that names the required check is not", () => {

@@ -420,18 +420,18 @@ console.log(JSON.stringify({ score: 7 }));
   }
 });
 
-test('README.md "Contract model" says a must_match that lists no key fails the fixture', () => {
-  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-  const section = readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "";
-  assert.ok(section !== "", 'README.md has no "Contract model" section');
+test('docs/contract-model.md "Contract model" says a must_match that lists no key fails the fixture', () => {
+  const doc = readFileSync(join(repoRoot, "docs", "contract-model.md"), "utf8");
+  const section = doc.split(/^# /m).find((s) => s.startsWith("Contract model")) ?? "";
+  assert.ok(section !== "", 'docs/contract-model.md has no "Contract model" section');
   assert.match(section.replace(/\s+/g, " "), /A `must_match` that lists no key compares nothing too, and fails the fixture before any CLI runs/);
 });
 
-test('README.md "Contract model" describes the load checks as the harness applies them', () => {
+test('docs/contract-model.md "Contract model" describes the load checks as the harness applies them', () => {
   // The section said only the first {FIXTURE_INPUT_DIR} is replaced, and named two contracts that stop
   // the run with an error; each now fails its fixture on load.
-  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-  const section = (readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "").replace(/\s+/g, " ");
+  const doc = readFileSync(join(repoRoot, "docs", "contract-model.md"), "utf8");
+  const section = (doc.split(/^# /m).find((s) => s.startsWith("Contract model")) ?? "").replace(/\s+/g, " ");
   assert.match(section, /every `\{FIXTURE_INPUT_DIR\}` stands for the fixture's input directory, matched literally/);
   assert.match(section, /A `contract\.yaml` that is not one valid YAML document .* fails the fixture before any CLI runs/);
   // The section said {FIXTURE_INPUT_DIR} stands for an empty string in a kind: package-name fixture; a
@@ -1094,7 +1094,7 @@ test("runFixture puts the package in place of every {PACKAGE} in a command, not 
 
 test("runFixture runs a directory fixture whose contract carries a package that is not a string", () => {
   // Only a kind: package-name fixture reads package, so its type is checked there and nowhere else,
-  // which is what README.md "Contract model" says.
+  // which is what docs/contract-model.md says.
   const { alone } = runBesideValidFixture("package-in-directory", stubContract({ kind: "kind: directory\npackage: 5" }));
   assert.equal(alone.rc, 0, alone.logged.join("\n"));
   assert.equal(alone.runs, 1, "the fixture ran its CLI once");
@@ -1167,7 +1167,7 @@ for (const { title, name, golden, reason, skip } of UNREADABLE_GOLDENS) {
 // Each path below is a FIFO. Opening one to read it waits for a program to write to it, and opening one
 // to write to it waits for a program to read from it, so a golden or a capture that was one held the run
 // before any later leg or fixture ran; a contract.yaml or a skip sentinel that is one is read only after
-// its type is looked up, as README.md "Contract model" says. The fixtures run in a child process, so a
+// its type is looked up, as docs/contract-model.md says. The fixtures run in a child process, so a
 // run that waits on the FIFO fails its test on the timeout instead of holding the test run too. `fifo`
 // is where the FIFO is made, `report` what the run prints on standard error for it, and `runs` how many
 // times the fixture runs its CLI.

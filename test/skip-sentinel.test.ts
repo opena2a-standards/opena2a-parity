@@ -116,10 +116,10 @@ test("every committed fixture covers each CLI with a participant entry or a skip
   assert.deepEqual(uncovered, []);
 });
 
-test('README.md "Adding a fixture" tells a contributor to create the skip sentinel for each CLI left out', () => {
-  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-  const section = readme.split(/^## /m).find((s) => s.startsWith("Adding a fixture")) ?? "";
-  assert.ok(section !== "", 'README.md has no "Adding a fixture" section');
+test('docs/adding-a-fixture.md "Adding a fixture" tells a contributor to create the skip sentinel for each CLI left out', () => {
+  const doc = readFileSync(join(repoRoot, "docs", "adding-a-fixture.md"), "utf8");
+  const section = doc.split(/^# /m).find((s) => s.startsWith("Adding a fixture")) ?? "";
+  assert.ok(section !== "", 'docs/adding-a-fixture.md has no "Adding a fixture" section');
   // a fixture added by following the steps without one fails with "not a participant and has no skip sentinel"
   assert.match(section.replace(/\s+/g, " "), /create `fixtures\/<name>\/expected\/<cli>\.skip` saying why/);
 });
