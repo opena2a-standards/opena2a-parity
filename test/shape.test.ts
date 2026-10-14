@@ -29,8 +29,8 @@ test("absentMustMatchKeys names exactly the contract keys the payload does not c
 });
 
 test("a key the participant's golden also omits is absence on both sides, not a shape failure", () => {
-  // check-registered-ai lists scanStatus under must_match and records that ai-trust's golden
-  // omits it on purpose. The payload omitting it too is the contract being met.
+  // scanStatus is a must-match key aiTrustGolden omits. The payload omitting it too is the
+  // contract being met.
   const withScanStatus = ["found", "trustLevel", "verdict", "packageType", "scanStatus"];
   const aiTrustGolden = { found: true, trustLevel: 3, verdict: "passed", packageType: "mcp_server" };
   const aiTrustActual = { found: true, trustLevel: 3, verdict: "passed", packageType: "mcp_server", source: "registry" };
@@ -51,7 +51,7 @@ test("unresolvedMustMatchKeys names the keys no participant's golden carries", (
   const golden = { score: 98, findings: [{ checkId: "GIT-001" }] };
   const keys = ["score", "$.score", "findings[0].checkId", "scroe", "findings.0.checkId"];
   assert.deepEqual(unresolvedMustMatchKeys(keys, [golden]), ["findings[0].checkId", "scroe"]);
-  // one golden carrying the key is enough: scanStatus is in hma's golden and omitted from ai-trust's
+  // one golden carrying the key is enough: scanStatus is in hmaGolden and omitted from aiTrustGolden
   const aiTrustGolden = { verdict: "passed" };
   const hmaGolden = { verdict: "passed", scanStatus: "warnings" };
   assert.deepEqual(unresolvedMustMatchKeys(["verdict", "scanStatus"], [aiTrustGolden, hmaGolden]), []);

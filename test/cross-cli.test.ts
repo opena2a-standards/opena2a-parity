@@ -98,7 +98,7 @@ test("crossCliDiffs names a must-match key on which two goldens hold different v
 });
 
 test("crossCliDiffs leaves a CLI whose golden omits a key out of that key's comparison", () => {
-  // check-registered-ai: scanStatus is a must-match key that ai-trust's golden omits on purpose
+  // scanStatus is a must-match key the stub's ai-trust golden omits
   const registered = { trustLevel: 3, verdict: "passed" };
   const legs = [
     { cli: "hma", golden: { ...registered, scanStatus: "warnings" }, actual: { ...registered, scanStatus: "warnings" } },
@@ -187,7 +187,7 @@ test("runFixture fails the registered-package trial: one golden at another trust
   const mustMatch = ["trustLevel", "name", "verdict", "packageType", "scanStatus"];
   const registered = { name: "@scope/server", trustLevel: 3, verdict: "passed", packageType: "mcp_server" };
   const scanned = j({ ...registered, scanStatus: "warnings" });
-  // ai-trust omits scanStatus, as its committed golden does: that alone is not a difference
+  // the stub's ai-trust golden omits scanStatus and its output does too: that alone is not a difference
   const agreed = runStubs(mustMatch, { hma: { golden: scanned }, "ai-trust": { golden: j(registered) }, opena2a: { golden: scanned } });
   assert.equal(agreed.rc, 0, agreed.logged.join("\n"));
   assert.ok(
@@ -285,7 +285,7 @@ test("runFixture reports a golden that carries no must-match key when it is not 
 });
 
 test("runFixture reports a participant's golden only when it carries none of the must-match keys, and once where no golden carries any", () => {
-  // one key carried is enough: ai-trust's golden omits scanStatus on check-registered-ai and carries the rest
+  // one key carried is enough: the stub's ai-trust golden omits scanStatus and carries the rest
   const registered = { name: "@scope/server", trustLevel: 3 };
   const scanned = j({ ...registered, scanStatus: "warnings" });
   const partial = runStubs(["name", "trustLevel", "scanStatus"], { hma: { golden: scanned }, "ai-trust": { golden: j(registered) }, opena2a: { golden: scanned } });

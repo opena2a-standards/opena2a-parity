@@ -609,10 +609,11 @@ function sortKeysReplacer() {
 // The contract keys a payload does not carry at all. Absence is the key resolving to undefined;
 // a present key holding null or a wrong value is a value question for the comparison, not a shape one.
 //
-// A key the participant's own golden also omits is absence on both sides, which is what the
-// contract recorded for ai-trust's `scanStatus` (check-registered-ai, 2026-06-10: "absent ==
-// absent") and what #21 broke: it read every absent must-match key as a wrong-shape document and
-// turned hackmyagent main's required parity context red on ai-trust rows that had not changed.
+// A key the participant's own golden also omits is absence on both sides, and #21 broke that: it
+// read every absent must-match key as a wrong-shape document and turned hackmyagent main's required
+// parity context red on ai-trust rows that had not changed. The check-registered-ai contract had
+// recorded the case on 2026-06-10 as "absent == absent", when its ai-trust golden omitted
+// `scanStatus`; that golden carries the key since #107.
 // Without a golden every absent key counts, so the fall-through case #21 was written for (a scan
 // document where the golden carries found, trustLevel, verdict) is still a SHAPE failure. A golden
 // that omits every key leaves nothing here to be absent; runFixture reports that golden itself.
@@ -638,9 +639,9 @@ export function shapeFailureReport(label: string, exitCode: number, absent: stri
 // The contract keys no participant's golden carries. A key in another syntax (`findings[0].checkId`)
 // or a misspelt one resolves to nothing in the golden and the payload alike, the shape check reads
 // that as absence on both sides, and nothing equals nothing, so it was counted equal without being
-// compared. One golden carrying the key is enough: check-registered-ai's scanStatus is in the hma and
-// opena2a goldens and omitted from ai-trust's on purpose. With no golden yet there is nothing to
-// resolve a key against, and each missing golden is reported on its own.
+// compared. One golden carrying the key is enough: a participant whose golden omits it is held to that
+// omission by its own leg. With no golden yet there is nothing to resolve a key against, and each
+// missing golden is reported on its own.
 export function unresolvedMustMatchKeys(mustMatch: string[], goldens: unknown[]): string[] {
   if (goldens.length === 0) return [];
   return mustMatch.filter((key) => goldens.every((golden) => getPath(golden, key) === undefined));
@@ -705,8 +706,8 @@ export function unexpectedErrorReport(label: string, exitCode: number, actual: u
 // at the others. Here the goldens are compared with each other, and so are the outputs.
 //
 // A CLI whose golden omits a key is left out of that key's comparison: the omission is that CLI's
-// recorded absence (ai-trust's `scanStatus` on check-registered-ai), and its own leg holds its output
-// to it. A leg that failed before its own comparison has no `actual` and takes part with its golden.
+// recorded absence, and its own leg holds its output to it. A leg that failed before its own
+// comparison has no `actual` and takes part with its golden.
 export function crossCliDiffs(mustMatch: string[], legs: { cli: string; golden: unknown; actual?: unknown }[]): string[] {
   const diffs: string[] = [];
   for (const key of mustMatch) {

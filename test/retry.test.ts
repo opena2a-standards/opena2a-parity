@@ -745,8 +745,7 @@ test("runFixture decides whether an error is expected on the normalized payload 
 });
 
 test("runFixture hands the golden to the shape check, so a must-match key the golden also omits is not a SHAPE failure", () => {
-  // check-registered-ai: scanStatus is a must-match key ai-trust's golden omits on purpose and the
-  // opena2a golden carries. The stub's hma leg plays ai-trust's part.
+  // scanStatus is a must-match key the stub's hma golden omits and its opena2a golden carries.
   const contract = `
 description: registered stub
 kind: package-name
