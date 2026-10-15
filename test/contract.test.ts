@@ -420,18 +420,18 @@ console.log(JSON.stringify({ score: 7 }));
   }
 });
 
-test('README.md "Contract model" says a must_match that lists no key fails the fixture', () => {
-  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-  const section = readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "";
-  assert.ok(section !== "", 'README.md has no "Contract model" section');
+test('docs/contract-model.md "Contract model" says a must_match that lists no key fails the fixture', () => {
+  const doc = readFileSync(join(repoRoot, "docs", "contract-model.md"), "utf8");
+  const section = doc.split(/^# /m).find((s) => s.startsWith("Contract model")) ?? "";
+  assert.ok(section !== "", 'docs/contract-model.md has no "Contract model" section');
   assert.match(section.replace(/\s+/g, " "), /A `must_match` that lists no key compares nothing too, and fails the fixture before any CLI runs/);
 });
 
-test('README.md "Contract model" describes the load checks as the harness applies them', () => {
+test('docs/contract-model.md "Contract model" describes the load checks as the harness applies them', () => {
   // The section said only the first {FIXTURE_INPUT_DIR} is replaced, and named two contracts that stop
   // the run with an error; each now fails its fixture on load.
-  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-  const section = (readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "").replace(/\s+/g, " ");
+  const doc = readFileSync(join(repoRoot, "docs", "contract-model.md"), "utf8");
+  const section = (doc.split(/^# /m).find((s) => s.startsWith("Contract model")) ?? "").replace(/\s+/g, " ");
   assert.match(section, /every `\{FIXTURE_INPUT_DIR\}` stands for the fixture's input directory, matched literally/);
   assert.match(section, /A `contract\.yaml` that is not one valid YAML document .* fails the fixture before any CLI runs/);
   // The section said {FIXTURE_INPUT_DIR} stands for an empty string in a kind: package-name fixture; a
@@ -764,9 +764,10 @@ test("normalizeProblems checks a pattern that nests more groups than the call st
   assert.equal("ab".replace(rulePattern(emptyAlternative, "/in"), "<IN>"), "<IN>a<IN>b<IN>");
   const problems = normalizeProblems(rule(emptyAlternative), "/in");
   assert.equal(problems.length, 1, problems.join("\n").slice(0, 400));
-  assert.ok(
-    problems[0].startsWith(`normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for the input directory: /${nested("x?")}|\\/in/g`),
-    problems[0].slice(0, 400),
+  const { length } = rulePattern(emptyAlternative, "/in").source;
+  assert.equal(
+    problems[0],
+    `normalize rule 1 (replace_regex) pattern can match empty text with {FIXTURE_INPUT_DIR} standing for the input directory: /${nested("x?").slice(0, 200)}…/g (the first 200 of its ${length} characters) would insert the replacement where it matched no text`,
   );
 });
 
@@ -785,9 +786,60 @@ test("normalizeProblems names a pattern the engine accepts but cannot compile wh
     assert.doesNotThrow(() => rulePattern(pattern, fixtureInputDir));
     const problems = normalizeProblems(rule(pattern), fixtureInputDir);
     assert.equal(problems.length, 1, `${pattern.slice(0, 20)}: ${problems.length} problems`);
-    const head = `normalize rule 1 (replace_regex) pattern is not a regular expression${standingFor}: Invalid regular expression: /`;
-    assert.ok(problems[0].startsWith(head) && problems[0].endsWith("/g: Regular expression too large"), `${problems[0].slice(0, 200)}...${problems[0].slice(-60)}`);
+    const source = pattern.replace("{FIXTURE_INPUT_DIR}", fixtureInputDir);
+    assert.equal(
+      problems[0],
+      `normalize rule 1 (replace_regex) pattern is not a regular expression${standingFor}: Invalid regular expression: /${source.slice(0, 200)}…/g (the first 200 of its ${source.length} characters): Regular expression too large`,
+    );
   }
+});
+
+test("normalizeProblems runs each pattern on text of one-byte characters and on text with a wider one", () => {
+  // The engine compiles a pattern once for each of the two widths of text, the first time it runs it on
+  // that width, as the test above shows for text with a wider character. For each pattern tried on Node
+  // 26.7.0, the compile for that text threw wherever the one for text of one-byte characters did, so no
+  // pattern fails the check on the run on one-byte text alone; this records the text it runs the pattern
+  // on, and dropping either run fails it.
+  const pattern = "x".repeat(10);
+  const widths: string[] = [];
+  const exec = RegExp.prototype.exec;
+  RegExp.prototype.exec = function (this: RegExp, text: string) {
+    if (this.source === pattern) widths.push([...text].some((c) => c.charCodeAt(0) > 0xff) ? "wide" : "one-byte");
+    return exec.call(this, text);
+  };
+  try {
+    assert.deepEqual(normalizeProblems({ normalize: [{ kind: "replace_regex", pattern, replacement: "<IN>" }] }, ""), []);
+  } finally {
+    RegExp.prototype.exec = exec;
+  }
+  assert.deepEqual(widths.sort(), ["one-byte", "wide"]);
+});
+
+test("normalizeProblems quotes no more than the first 200 characters of a pattern", () => {
+  // The engine's message repeats the whole pattern, so the line for a rule of 100,000 characters was
+  // 100,131 characters long, and a pattern that can match empty text was quoted whole as well.
+  const rule = (pattern: string) => ({ normalize: [{ kind: "replace_regex" as const, pattern, replacement: "<IN>" }] });
+  const [tooLarge] = normalizeProblems(rule("x".repeat(100_000)), "/in");
+  assert.equal(
+    tooLarge,
+    `normalize rule 1 (replace_regex) pattern is not a regular expression: Invalid regular expression: /${"x".repeat(200)}…/g (the first 200 of its 100000 characters): Regular expression too large`,
+  );
+  const standingFor = "with {FIXTURE_INPUT_DIR} standing for the input directory";
+  const long = `${"y".repeat(300)}|({FIXTURE_INPUT_DIR})?`;
+  assert.deepEqual(normalizeProblems(rule(long), "/in"), [
+    `normalize rule 1 (replace_regex) pattern can match empty text ${standingFor}: /${"y".repeat(200)}…/g (the first 200 of its ${rulePattern(long, "/in").source.length} characters) would insert the replacement where it matched no text`,
+  ]);
+  // A character outside the Basic Multilingual Plane is two UTF-16 code units, and the cut does not split it.
+  const astral = `${"y".repeat(199)}${"\u{1F600}".repeat(10)}|({FIXTURE_INPUT_DIR})?`;
+  assert.deepEqual(normalizeProblems(rule(astral), "/in"), [
+    `normalize rule 1 (replace_regex) pattern can match empty text ${standingFor}: /${"y".repeat(199)}…/g (the first 199 of its ${rulePattern(astral, "/in").source.length} characters) would insert the replacement where it matched no text`,
+  ]);
+  // A pattern of 200 characters is quoted whole.
+  const whole = `${"y".repeat(192)}|({FIXTURE_INPUT_DIR})?`;
+  assert.equal(rulePattern(whole, "/in").source.length, 200);
+  assert.deepEqual(normalizeProblems(rule(whole), "/in"), [
+    `normalize rule 1 (replace_regex) pattern can match empty text ${standingFor}: ${rulePattern(whole, "/in")} would insert the replacement where it matched no text`,
+  ]);
 });
 
 test("normalizeProblems passes a pattern that can match empty text where its replacement is empty", () => {
@@ -950,7 +1002,7 @@ const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; pro
       normalize: `normalize: [{ kind: replace_regex, pattern: "${"(?:".repeat(100_000)}x?${")".repeat(100_000)}|{FIXTURE_INPUT_DIR}", replacement: "<IN>" }]`,
     }),
     problem:
-      /^\[deep-or-dir\] contract\.yaml normalize rule 1 \(replace_regex\) pattern can match empty text with \{FIXTURE_INPUT_DIR\} standing for the input directory: \/(?:\(\?:){100000}x\?\){100000}\|.*\\\/deep-or-dir\\\/input\/g would insert the replacement where it matched no text$/,
+      /^\[deep-or-dir\] contract\.yaml normalize rule 1 \(replace_regex\) pattern can match empty text with \{FIXTURE_INPUT_DIR\} standing for the input directory: \/(?:\(\?:){66}\(\?…\/g \(the first 200 of its \d+ characters\) would insert the replacement where it matched no text$/,
   },
   {
     // SyntaxError: Invalid regular expression: /x.../g: Regular expression too large, thrown after the CLI had run
@@ -958,7 +1010,7 @@ const UNRUNNABLE_CONTRACTS: { title: string; name: string; contract: string; pro
     name: "too-large",
     contract: stubContract({ normalize: `normalize: [{ kind: replace_regex, pattern: "${"x".repeat(100_000)}", replacement: "<IN>" }]` }),
     problem:
-      /^\[too-large\] contract\.yaml normalize rule 1 \(replace_regex\) pattern is not a regular expression: Invalid regular expression: \/x{100000}\/g: Regular expression too large$/,
+      /^\[too-large\] contract\.yaml normalize rule 1 \(replace_regex\) pattern is not a regular expression: Invalid regular expression: \/x{200}…\/g \(the first 200 of its 100000 characters\): Regular expression too large$/,
   },
   {
     // YAMLParseError, as are the next two
@@ -1042,7 +1094,7 @@ test("runFixture puts the package in place of every {PACKAGE} in a command, not 
 
 test("runFixture runs a directory fixture whose contract carries a package that is not a string", () => {
   // Only a kind: package-name fixture reads package, so its type is checked there and nowhere else,
-  // which is what README.md "Contract model" says.
+  // which is what docs/contract-model.md says.
   const { alone } = runBesideValidFixture("package-in-directory", stubContract({ kind: "kind: directory\npackage: 5" }));
   assert.equal(alone.rc, 0, alone.logged.join("\n"));
   assert.equal(alone.runs, 1, "the fixture ran its CLI once");
@@ -1115,7 +1167,7 @@ for (const { title, name, golden, reason, skip } of UNREADABLE_GOLDENS) {
 // Each path below is a FIFO. Opening one to read it waits for a program to write to it, and opening one
 // to write to it waits for a program to read from it, so a golden or a capture that was one held the run
 // before any later leg or fixture ran; a contract.yaml or a skip sentinel that is one is read only after
-// its type is looked up, as README.md "Contract model" says. The fixtures run in a child process, so a
+// its type is looked up, as docs/contract-model.md says. The fixtures run in a child process, so a
 // run that waits on the FIFO fails its test on the timeout instead of holding the test run too. `fifo`
 // is where the FIFO is made, `report` what the run prints on standard error for it, and `runs` how many
 // times the fixture runs its CLI.
@@ -1256,6 +1308,19 @@ const UNREADABLE_FILES: {
     runs: 1,
   },
   {
+    // passed its leg with a check for a directory or a FIFO only, which wrote the capture to the device
+    title: "whose capture path is a symbolic link to a device",
+    name: "device-capture",
+    arrange: (_fixtureDir, actualDir) => {
+      mkdirSync(join(actualDir, "device-capture"), { recursive: true });
+      symlinkSync("/dev/null", join(actualDir, "device-capture", "hma.json"));
+    },
+    rc: 1,
+    line: /^\n\[FAIL\] device-capture × hma: the capture at .*\/device-capture\/hma\.json is a device or socket, not a file$/,
+    runs: 1,
+    skip: process.platform === "win32" ? "Windows has no /dev/null" : undefined,
+  },
+  {
     // the directory its captures go in is made inside the try that fails the leg
     title: "whose directory for captures is a file",
     name: "file-capture-dir",
@@ -1319,3 +1384,36 @@ for (const { title, name, arrange, rc, line, runs, skip } of UNREADABLE_FILES) {
     assert.ok(beside.logged.some((logged) => logged.startsWith("[OK]   valid × hma:")), beside.logged.join("\n"));
   });
 }
+
+test("runFixtures fails the leg of a participant whose output a normalize pattern cannot be run on, and runs the next fixture", () => {
+  // The load check compiles each pattern where the call stack is shallow. normalize builds it again, and
+  // the engine can compile it again at the depth of the first string it reaches and throw "Stack overflow",
+  // a SyntaxError, which stopped the run: with "a?" repeated 5,000 times, an output that nested a string
+  // 300 arrays deep beside 2,500,000 objects did. Whether it compiles again there depends on when the
+  // engine drops the code it compiled, so a stand-in for the replace throws the engine's error for this
+  // pattern, which is short enough to pass the load check at any depth the test runs at.
+  const pattern = "a?".repeat(1000);
+  const replace = RegExp.prototype[Symbol.replace];
+  RegExp.prototype[Symbol.replace] = function (this: RegExp, ...args: unknown[]) {
+    if (this.source === pattern) throw new SyntaxError(`Invalid regular expression: /${pattern}/g: Stack overflow`);
+    return Reflect.apply(replace, this, args);
+  } as typeof replace;
+  try {
+    // A directory fixture, so the stub's output holds a string: the input directory among its arguments.
+    const contract = stubContract({ kind: "kind: directory", normalize: `normalize: [{ kind: replace_regex, pattern: "${pattern}", replacement: "" }]` });
+    const { alone, beside } = runBesideValidFixture("overflow", contract);
+    assert.equal(alone.rc, 1, alone.logged.join("\n"));
+    assert.deepEqual(alone.logged, [
+      `\n[FAIL] overflow × hma: normalize rule 1 (replace_regex) pattern could not be run on the output: Invalid regular expression: /${pattern.slice(0, 200)}…/g (the first 200 of its 2000 characters): Stack overflow`,
+      "[SKIP] overflow × opena2a: opena2a does not exercise this stub",
+      "[SKIP] overflow × ai-trust: ai-trust does not exercise this stub",
+    ]);
+    assert.equal(alone.runs, 1, "the fixture ran its CLI once");
+    assert.equal(alone.args, undefined, "the fixture wrote a capture");
+    assert.equal(beside.failed, 1, beside.logged.join("\n"));
+    assert.equal(beside.runs, 2, "the valid fixture after it ran its CLI");
+    assert.ok(beside.logged.some((logged) => logged.startsWith("[OK]   valid × hma:")), beside.logged.join("\n"));
+  } finally {
+    RegExp.prototype[Symbol.replace] = replace;
+  }
+});

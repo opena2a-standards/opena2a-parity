@@ -98,7 +98,7 @@ test("crossCliDiffs names a must-match key on which two goldens hold different v
 });
 
 test("crossCliDiffs leaves a CLI whose golden omits a key out of that key's comparison", () => {
-  // check-registered-ai: scanStatus is a must-match key that ai-trust's golden omits on purpose
+  // scanStatus is a must-match key the stub's ai-trust golden omits
   const registered = { trustLevel: 3, verdict: "passed" };
   const legs = [
     { cli: "hma", golden: { ...registered, scanStatus: "warnings" }, actual: { ...registered, scanStatus: "warnings" } },
@@ -175,19 +175,20 @@ test("runFixture fails a fixture whose CLIs each match their own golden while th
   );
 });
 
-test("README.md tells a reader whose CLIs differ on purpose to move the key from must_match, not only to list it under may_differ", () => {
-  const readme = readFileSync(join(repoRoot, "README.md"), "utf8").replace(/\s+/g, " ");
+test("the docs tell a reader whose CLIs differ on purpose to move the key from must_match, not only to list it under may_differ", () => {
+  const read = (path: string) => readFileSync(join(repoRoot, path), "utf8").replace(/\s+/g, " ");
+  const docs = `${read("docs/contract-model.md")} ${read("docs/re-baselining-goldens.md")}`;
   // a key listed under both fails the fixture before any CLI runs (mayDifferProblems)
-  assert.doesNotMatch(readme, /(?:list the key under|the key belongs under) `may_differ`/);
+  for (const text of [docs, read("README.md")]) assert.doesNotMatch(text, /(?:list the key under|the key belongs under) `may_differ`/);
   // the cross-CLI section and the re-baselining step both give the advice
-  assert.equal(readme.match(/move the key from `must_match` to `may_differ`, with the reason/g)?.length, 2, readme);
+  assert.equal(docs.match(/move the key from `must_match` to `may_differ`, with the reason/g)?.length, 2, docs);
 });
 
 test("runFixture fails the registered-package trial: one golden at another trust level and verdict", () => {
   const mustMatch = ["trustLevel", "name", "verdict", "packageType", "scanStatus"];
   const registered = { name: "@scope/server", trustLevel: 3, verdict: "passed", packageType: "mcp_server" };
   const scanned = j({ ...registered, scanStatus: "warnings" });
-  // ai-trust omits scanStatus, as its committed golden does: that alone is not a difference
+  // the stub's ai-trust golden omits scanStatus and its output does too: that alone is not a difference
   const agreed = runStubs(mustMatch, { hma: { golden: scanned }, "ai-trust": { golden: j(registered) }, opena2a: { golden: scanned } });
   assert.equal(agreed.rc, 0, agreed.logged.join("\n"));
   assert.ok(
@@ -285,7 +286,7 @@ test("runFixture reports a golden that carries no must-match key when it is not 
 });
 
 test("runFixture reports a participant's golden only when it carries none of the must-match keys, and once where no golden carries any", () => {
-  // one key carried is enough: ai-trust's golden omits scanStatus on check-registered-ai and carries the rest
+  // one key carried is enough: the stub's ai-trust golden omits scanStatus and carries the rest
   const registered = { name: "@scope/server", trustLevel: 3 };
   const scanned = j({ ...registered, scanStatus: "warnings" });
   const partial = runStubs(["name", "trustLevel", "scanStatus"], { hma: { golden: scanned }, "ai-trust": { golden: j(registered) }, opena2a: { golden: scanned } });
@@ -353,10 +354,10 @@ test("runFixture calls no key in no golden on a keyless leg's line while another
   assert.ok(!unread.logged.some((l) => l.includes("(in no golden)")), unread.logged.join("\n"));
 });
 
-test('README.md "Contract model" says a participant whose golden carries none of the must_match keys fails the fixture', () => {
-  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-  const section = readme.split(/^## /m).find((s) => s.startsWith("Contract model")) ?? "";
-  assert.ok(section !== "", 'README.md has no "Contract model" section');
+test('docs/contract-model.md "Contract model" says a participant whose golden carries none of the must_match keys fails the fixture', () => {
+  const doc = readFileSync(join(repoRoot, "docs", "contract-model.md"), "utf8");
+  const section = doc.split(/^# /m).find((s) => s.startsWith("Contract model")) ?? "";
+  assert.ok(section !== "", 'docs/contract-model.md has no "Contract model" section');
   assert.match(section.replace(/\s+/g, " "), /A participant whose golden carries none of the `must_match` keys fails the fixture too/);
 });
 

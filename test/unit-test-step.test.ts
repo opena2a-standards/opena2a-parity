@@ -8,10 +8,11 @@ import { parse } from "yaml";
 
 // A reusable workflow's steps come from the commit a consumer pins in `uses:`, so only a consumer
 // pinned at or after the commit that added the `npm test` step runs this repository's unit tests.
-// README.md names that commit; these tests keep the name true.
+// docs/re-baselining-goldens.md names that commit; these tests keep the name true.
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const WORKFLOW = ".github/workflows/parity.yml";
+const STEP_DOC = "docs/re-baselining-goldens.md";
 
 // True when a step of some job runs `npm test` as one of its command lines. A comment or a step
 // name that mentions it does not count.
@@ -24,7 +25,7 @@ export function runsUnitTests(workflowText: string): boolean {
   );
 }
 
-// The commits README.md names, in backticks, in the paragraph that describes the unit-test step.
+// The commits a document names, in backticks, in the paragraph that describes the unit-test step.
 export function citedStepCommits(readme: string): string[] {
   const shas = readme
     .split(/\n\s*\n/)
@@ -60,22 +61,22 @@ function historySkipReason(sha: string): string | false {
 }
 
 function citedCommit(): string {
-  const shas = citedStepCommits(readFileSync(join(repoRoot, "README.md"), "utf8"));
+  const shas = citedStepCommits(readFileSync(join(repoRoot, STEP_DOC), "utf8"));
   assert.equal(
     shas.length,
     1,
-    "The README.md paragraph about the unit-test step (`npm test`) must name, in backticks, the one commit " +
+    `The ${STEP_DOC} paragraph about the unit-test step (\`npm test\`) must name, in backticks, the one commit ` +
       `that added the step, so a consumer can tell whether its \`uses:\` pin runs it; found: ${JSON.stringify(shas)}`,
   );
   return shas[0];
 }
 
-test("README.md names the commit that added the unit-test step, and the workflow still has the step", () => {
+test("docs/re-baselining-goldens.md names the commit that added the unit-test step, and the workflow still has the step", () => {
   citedCommit();
   assert.equal(runsUnitTests(readFileSync(join(repoRoot, WORKFLOW), "utf8")), true, `${WORKFLOW} has no \`npm test\` step`);
 });
 
-test("the commit README.md names is the one that added the unit-test step to the workflow", (t) => {
+test("the commit docs/re-baselining-goldens.md names is the one that added the unit-test step to the workflow", (t) => {
   const sha = citedCommit();
   const skip = historySkipReason(sha);
   if (skip) {

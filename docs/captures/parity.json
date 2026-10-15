@@ -1,0 +1,18 @@
+{
+  "command": "npm run parity",
+  "source": "CI run of the parity workflow on main",
+  "run": "https://github.com/opena2a-standards/opena2a-parity/actions/runs/38491968851",
+  "harnessCommit": "4acd86447040a3278f097d79f19fa17d74499e73",
+  "cliCommits": {
+    "hackmyagent": "ed527241b10bc5a85eba1d5d02209d856515f717",
+    "opena2a": "1951af1fec64dacbc4676bb4021026ac531a1fe8",
+    "ai-trust": "f6f7afb8d1c7eaf279e6677a6051d684c1945199"
+  },
+  "fixtures": "fixtures/ at harnessCommit",
+  "date": "2026-10-14T00:46:38Z",
+  "exitCode": 0,
+  "readmeExcerpt": {
+    "lines": "4-10",
+    "elided": "11-32"
+  }
+}

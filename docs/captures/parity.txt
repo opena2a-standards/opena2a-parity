@@ -1,0 +1,32 @@
+> opena2a-parity@0.1.0-pre parity
+> node --experimental-strip-types src/run-parity.ts
+
+opena2a-parity harness
+  fixtures dir: /home/runner/work/opena2a-parity/opena2a-parity/fixtures
+  drift mode:   off
+[OK]   check-not-found × hma: 3 must-match fields equal apart from object key order
+[OK]   check-not-found × ai-trust: 3 must-match fields equal apart from object key order
+[OK]   check-not-found × opena2a: 3 must-match fields equal apart from object key order
+[OK]   check-not-found: hma, ai-trust, opena2a agree on every must-match field their goldens carry
+[OK]   check-registered-ai × hma: 5 must-match fields equal apart from object key order
+[OK]   check-registered-ai × ai-trust: 5 must-match fields equal apart from object key order
+[OK]   check-registered-ai × opena2a: 5 must-match fields equal apart from object key order
+[OK]   check-registered-ai: hma, ai-trust, opena2a agree on every must-match field their goldens carry
+[OK]   check-registered-ai-pypi × hma: 5 must-match fields equal apart from object key order
+[OK]   check-registered-ai-pypi × ai-trust: 5 must-match fields equal apart from object key order
+[OK]   check-registered-ai-pypi × opena2a: 5 must-match fields equal apart from object key order
+[OK]   check-registered-ai-pypi: hma, ai-trust, opena2a agree on every must-match field their goldens carry
+[OK]   scan-soul-hardened × hma: 5 must-match fields equal apart from object key order
+[OK]   scan-soul-hardened × opena2a: 5 must-match fields equal apart from object key order
+[OK]   scan-soul-hardened: hma, opena2a agree on every must-match field their goldens carry
+[SKIP] scan-soul-hardened × ai-trust: ai-trust does not have a scan-soul command. Behavioral-governance scanning is HMA/opena2a-only. Skipping for the established 2-way pattern (see secure-dirty-skill, secure-empty-dir).
+[OK]   secure-dirty-skill × hma: 4 must-match fields equal apart from object key order
+[OK]   secure-dirty-skill × opena2a: 4 must-match fields equal apart from object key order
+[OK]   secure-dirty-skill: hma, opena2a agree on every must-match field their goldens carry
+[SKIP] secure-dirty-skill × ai-trust: ai-trust check takes a package name, not a directory. Dir-scan fixtures are HMA/opena2a-only. Three-way parity lands with check-* fixtures.
+[OK]   secure-empty-dir × hma: 4 must-match fields equal apart from object key order
+[OK]   secure-empty-dir × opena2a: 4 must-match fields equal apart from object key order
+[OK]   secure-empty-dir: hma, opena2a agree on every must-match field their goldens carry
+[SKIP] secure-empty-dir × ai-trust: ai-trust check takes a package name, not a directory. Dir-scan fixtures are HMA/opena2a-only. See secure-dirty-skill for the established pattern.
+
+6 fixture(s) run, 0 fixture failure(s)

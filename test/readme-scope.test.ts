@@ -27,18 +27,21 @@ function fixturesWithDifferingGoldens(): string[] {
   return differing;
 }
 
-test("README.md does not claim identical whole outputs while the goldens differ outside must_match", () => {
-  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+// README.md says what the gate checks in one sentence; docs/how-it-works.md holds the full description.
+test("README.md and docs/how-it-works.md do not claim identical whole outputs while the goldens differ outside must_match", () => {
   const differing = fixturesWithDifferingGoldens();
   if (differing.length === 0) return;
-  const claim = readme.match(WHOLE_OUTPUT_CLAIM)?.[0] ?? null;
-  assert.equal(
-    claim,
-    null,
-    `README.md says "${claim}", but the goldens of ${differing.join(", ")} differ outside their must_match keys. ` +
-      "Describe the gate as comparing each fixture's contract-tracked fields.",
-  );
-  assert.match(readme, /identical values on each fixture's contract-tracked fields/);
+  for (const path of ["README.md", "docs/how-it-works.md"]) {
+    const text = readFileSync(join(repoRoot, path), "utf8");
+    const claim = text.match(WHOLE_OUTPUT_CLAIM)?.[0] ?? null;
+    assert.equal(
+      claim,
+      null,
+      `${path} says "${claim}", but the goldens of ${differing.join(", ")} differ outside their must_match keys. ` +
+        "Describe the gate as comparing each fixture's contract-tracked fields.",
+    );
+    assert.match(text, /identical values on each fixture's contract-tracked fields/, path);
+  }
 });
 
 test("the whole-output claim pattern matches the old wording and not the contract-tracked wording", () => {

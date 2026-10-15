@@ -31,6 +31,14 @@ const WELL_KNOWN_TICKET_SHAPED = new Set([
   "HTTP-2", "HTTP-3", "TLS-1.0", "TLS-1.1", "TLS-1.2", "TLS-1.3", "H-264", "H-265", "X-509",
 ]);
 
+// An issue or pull request in another repository is cited as `<repo>#<number>`. A test cannot open
+// GitHub, so each such citation must be one listed here, opened on GitHub and found to be the issue
+// or pull request its sentence describes. A "(#123)" in a pull request title can be a number in
+// another repository, so open the cited number itself before listing it.
+export const CHECKED_ISSUE_REFERENCES = new Set(["ai-trust#61", "ai-trust#105", "hackmyagent#751", "hackmyagent#756"]);
+// The repository name ends in a letter or digit, so "pre-#458" is not read as a repository called "pre-".
+const ISSUE_REFERENCE = /(?<![\w.-])[A-Za-z](?:[\w.-]*[A-Za-z0-9])?#\d+\b/g;
+
 // A document path resolves when it names a file inside the repository, relative to the repository
 // root or to the citing file. A fixture contract describes its own input/, so that is tried too.
 function resolvesInsideRepo(cited: string, citingFile: string): boolean {
@@ -65,17 +73,28 @@ export function unreadableCitations(text: string, citingFile: string, checkIds: 
     if (!checkIds.has(m[0]) && !WELL_KNOWN_TICKET_SHAPED.has(m[0]) && !STANDARD_IDENTIFIER.test(m[0])) found.push(`ticket-style identifier: ${m[0]}`);
   }
   for (const m of withoutLinks.matchAll(MILESTONE_CODE)) found.push(`milestone or finding code: ${m[0]}`);
+  for (const m of withoutLinks.matchAll(ISSUE_REFERENCE)) {
+    if (!CHECKED_ISSUE_REFERENCES.has(m[0])) found.push(`issue reference not in CHECKED_ISSUE_REFERENCES: ${m[0]}`);
+  }
   return found;
+}
+
+// README.md and the pages it moved its reference text to: CONTRIBUTING.md and docs/*.md.
+function documentPages(): string[] {
+  const docs = readdirSync(join(repoRoot, "docs"))
+    .filter((name) => name.endsWith(".md"))
+    .map((name) => join(repoRoot, "docs", name));
+  return [join(repoRoot, "README.md"), join(repoRoot, "CONTRIBUTING.md"), ...docs];
 }
 
 function citingFiles(): string[] {
   const contracts = readdirSync(join(repoRoot, "fixtures"))
     .map((fixture) => join(repoRoot, "fixtures", fixture, "contract.yaml"))
     .filter((path) => existsSync(path));
-  return [join(repoRoot, "README.md"), ...contracts];
+  return [...documentPages(), ...contracts];
 }
 
-test("README.md and every fixture contract cite only what a reader of this repository can open", () => {
+test("README.md, the pages it links and every fixture contract cite only what a reader of this repository can open", () => {
   const checkIds = goldenCheckIds();
   const files = citingFiles();
   assert.ok(files.length > 1, "expected README.md and at least one fixtures/*/contract.yaml");
@@ -85,7 +104,21 @@ test("README.md and every fixture contract cite only what a reader of this repos
   assert.deepEqual(
     problems,
     [],
-    "Replace each with a sentence that stands on its own, a document inside this repository, or a link to a public issue.",
+    "Replace each with a sentence that stands on its own, a document inside this repository, or a link to a public issue. " +
+      "An issue reference that is the issue or pull request its sentence describes on GitHub can instead be added to CHECKED_ISSUE_REFERENCES.",
+  );
+});
+
+test("an issue reference in another repository is reported unless it is in CHECKED_ISSUE_REFERENCES", () => {
+  const readme = join(repoRoot, "README.md");
+  assert.deepEqual(unreadableCitations("Left out of that output (ai-trust#61, ai-trust#191).", readme, new Set()), [
+    "issue reference not in CHECKED_ISSUE_REFERENCES: ai-trust#191",
+  ]);
+  assert.deepEqual(unreadableCitations("Since hackmyagent#756 (issue hackmyagent#751) and ai-trust#105.", readme, new Set()), []);
+  // a hyphen before the number, a bare number and a link fragment are not references to another repository
+  assert.deepEqual(
+    unreadableCitations("The pre-#458 output, #756 and https://github.com/opena2a-org/ai-trust/issues/191#issue-1.", readme, new Set()),
+    [],
   );
 });
 
@@ -176,12 +209,14 @@ export function unconditionalBlockClaims(text: string): string[] {
     .filter((sentence) => !(sentence.includes("`parity / parity`") && /\brequire/.test(sentence)));
 }
 
-test("README.md says a parity failure blocks a PR only where `parity / parity` is a required check", () => {
-  assert.deepEqual(
-    unconditionalBlockClaims(readFileSync(join(repoRoot, "README.md"), "utf8")),
-    [],
-    "Say the PR gets a failing check, and that it is blocked only where `parity / parity` is required.",
-  );
+test("README.md and the pages it links say a parity failure blocks a PR only where `parity / parity` is a required check", () => {
+  for (const page of documentPages()) {
+    assert.deepEqual(
+      unconditionalBlockClaims(readFileSync(page, "utf8")),
+      [],
+      `${relative(repoRoot, page)}: Say the PR gets a failing check, and that it is blocked only where \`parity / parity\` is required.`,
+    );
+  }
 });
 
 test("a sentence that fails or blocks a PR unconditionally is reported; one that names the required check is not", () => {
