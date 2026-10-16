@@ -25,23 +25,35 @@ opena2a-parity harness
 ...
 ```
 
-The harness checks that the three CLIs, given the same input, hold identical values on each fixture's contract-tracked fields: the keys its `contract.yaml` lists under `must_match`. It exits 0 when every fixture passes, 1 when any fails, and 2 when `HMA_BIN`, `OPENA2A_BIN` or `AI_TRUST_BIN` is unset or empty.
+The harness checks that the three CLIs, given the same input, hold identical values on each fixture's contract-tracked fields: the keys its `contract.yaml` lists under `must_match`.
 
-In CI, the workflow sets these env vars from freshly-built CLIs and calls the same script. A failing run shows as a failing check on the PR, which blocks the merge only where that CLI's repository lists `parity / parity` as a required status check on `main`.
+It exits 0 when every fixture passes, 1 when any fails, and 2 when `HMA_BIN`, `OPENA2A_BIN` or `AI_TRUST_BIN` is unset or empty.
+
+In CI, the workflow sets these env vars from freshly-built CLIs and calls the same script.
+
+A failing run shows as a failing check on the PR, which blocks the merge only where that CLI's repository lists `parity / parity` as a required status check on `main`.
 
 ## Contract model
 
-Each fixture under `fixtures/<name>/` has a `contract.yaml`, a golden under `expected/` for each CLI in `participants`, and for each CLI left out of it a sentinel `expected/<cli>.skip` saying why. `must_match` lists the keys the CLIs must agree on, at least one; `may_differ` lists keys allowed to differ, each with a reason.
+Each fixture under `fixtures/<name>/` has a `contract.yaml`, a golden under `expected/` for each CLI in `participants`, and for each CLI left out of it a sentinel `expected/<cli>.skip` saying why.
 
-If the CLIs differ on purpose, move the key from `must_match` to `may_differ`, with the reason. Every field and the checks the harness applies on load: [docs/contract-model.md](docs/contract-model.md). To add a fixture: [docs/adding-a-fixture.md](docs/adding-a-fixture.md).
+`must_match` lists the keys the CLIs must agree on, at least one; `may_differ` lists keys allowed to differ, each with a reason.
+
+If the CLIs differ on purpose, move the key from `must_match` to `may_differ`, with the reason.
+
+Every field and the checks the harness applies on load: [docs/contract-model.md](docs/contract-model.md). To add a fixture: [docs/adding-a-fixture.md](docs/adding-a-fixture.md).
 
 ## Re-baselining goldens
 
-When a CLI changes contract-tracked output on purpose, its golden lands here before the CLI change merges. Run the harness against the changed CLI, check that every drifted field in its capture is intended, then copy the capture over the golden: `cp actual/<fixture>/<cli>.json fixtures/<fixture>/expected/<cli>.json`. Full procedure: [docs/re-baselining-goldens.md](docs/re-baselining-goldens.md).
+When a CLI changes contract-tracked output on purpose, its golden lands here before the CLI change merges.
+
+Run the harness against the changed CLI, check that every drifted field in its capture is intended, then copy the capture over the golden: `cp actual/<fixture>/<cli>.json fixtures/<fixture>/expected/<cli>.json`. Full procedure: [docs/re-baselining-goldens.md](docs/re-baselining-goldens.md).
 
 ## Intentional-drift demo
 
-`npm run parity:drift-demo` — sets `INTENTIONAL_DRIFT=1`, which the harness applies by mutating one must-match field in the captured output. Expected exit code: non-zero with a clear diff. Used to prove the gate is live.
+`npm run parity:drift-demo` — sets `INTENTIONAL_DRIFT=1`, which the harness applies by mutating one must-match field in the captured output.
+
+Expected exit code: non-zero with a clear diff. Used to prove the gate is live.
 
 ## Documentation
 
