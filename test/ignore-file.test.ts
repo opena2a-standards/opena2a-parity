@@ -50,9 +50,10 @@ export function committedRules(text: string): string[] {
 }
 
 // A git hook exports GIT_DIR and the other variables that tie git to the hook's repository, and a git
-// child that inherits them answers for that repository instead of for the directory it runs in. The
-// checkout check runs git without the names `git rev-parse --local-env-vars` lists, as githooks(5)
-// advises for a hook that runs git in another repository.
+// child that inherits them answers for, and writes to, that repository instead of the directory it
+// runs in. The checks run git in a directory of their own without the names
+// `git rev-parse --local-env-vars` lists, as githooks(5) advises for a hook that runs git in another
+// repository.
 const localEnvVars = (spawnSync("git", ["rev-parse", "--local-env-vars"], { encoding: "utf8" }).stdout ?? "")
   .split("\n")
   .filter((name) => name !== "");
@@ -108,7 +109,7 @@ export function beyondSymlink(root: string, path: string): boolean {
   return false;
 }
 
-function checkIgnoredPaths(root: string): void {
+function checkIgnoredPaths(root: string, env: Record<string, string | undefined>): void {
   // Stand-in for a contributor's global ignore file that excludes editor state and env files.
   const dir = mkdtempSync(join(tmpdir(), "parity-ignore-"));
   const localExcludes = join(dir, "excludes");
@@ -117,6 +118,7 @@ function checkIgnoredPaths(root: string): void {
     const r = spawnSync("git", ["-c", `core.excludesFile=${localExcludes}`, "check-ignore", "-q", "--no-index", path], {
       cwd: root,
       encoding: "utf8",
+      env: gitEnv(env),
     });
     assert.ok(r.status === 0 || r.status === 1, `git check-ignore ${path} failed: ${r.stderr}`);
     return r.status === 0;
@@ -155,13 +157,13 @@ function checkIgnoredPaths(root: string): void {
 }
 
 test("git ignores run output and checkouts, and contributor-local rules cannot hide a fixture input", { skip: gitSkip }, () => {
-  checkIgnoredPaths(repoRoot);
+  checkIgnoredPaths(repoRoot, process.env);
 });
 
-test("a checkout whose node_modules is a symbolic link passes the ignore checks", { skip }, () => {
+function checkLinkedNodeModules(env: Record<string, string | undefined>): void {
   const root = mkdtempSync(join(tmpdir(), "parity-linked-"));
   try {
-    assert.equal(spawnSync("git", ["init", "-q"], { cwd: root }).status, 0);
+    assert.equal(spawnSync("git", ["init", "-q"], { cwd: root, env: gitEnv(env) }).status, 0);
     copyFileSync(join(repoRoot, ".gitignore"), join(root, ".gitignore"));
     mkdirSync(join(root, "installed", "yaml"), { recursive: true });
     writeFileSync(join(root, "installed", "yaml", "package.json"), "{}\n");
@@ -171,9 +173,45 @@ test("a checkout whose node_modules is a symbolic link passes the ignore checks"
     assert.equal(beyondSymlink(root, "node_modules"), false);
     assert.equal(beyondSymlink(root, "installed/yaml/package.json"), false);
     assert.equal(beyondSymlink(root, "actual/secure-dirty-skill/hma.json"), false);
-    checkIgnoredPaths(root);
+    checkIgnoredPaths(root, env);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("a checkout whose node_modules is a symbolic link passes the ignore checks", { skip }, () => {
+  checkLinkedNodeModules(process.env);
+});
+
+// A pre-push hook run from a linked worktree exports GIT_DIR=<main>/.git/worktrees/<name>. A git init
+// that inherits it reinitialises that gitdir, takes it for a bare repository and writes core.bare=true
+// into the config the main checkout shares. The symbolic-link check runs here under such a GIT_DIR,
+// naming a scratch linked worktree created under this test's temporary directory.
+test("run from a hook in a linked worktree, the symbolic-link check leaves that repository untouched", { skip }, () => {
+  const scratch = mkdtempSync(join(tmpdir(), "parity-hook-worktree-"));
+  const git = (cwd: string, args: string[], input?: string) => {
+    const r = spawnSync("git", args, { cwd, encoding: "utf8", env: gitEnv(process.env), input });
+    assert.equal(r.status, 0, `git ${args.join(" ")} failed: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  try {
+    const main = join(scratch, "main");
+    const land = join(scratch, "land");
+    mkdirSync(main);
+    git(main, ["init", "-q"]);
+    const tree = git(main, ["mktree"], "");
+    const commit = git(main, ["-c", "user.name=parity", "-c", "user.email=parity@example.invalid", "commit-tree", "--no-gpg-sign", "-m", "init", tree]);
+    git(main, ["worktree", "add", "-q", "--detach", land, commit]);
+    const gitdir = git(land, ["rev-parse", "--absolute-git-dir"]);
+    assert.equal(realpathSync(gitdir), realpathSync(join(main, ".git", "worktrees", "land")));
+    assert.equal(git(main, ["config", "--bool", "core.bare"]), "false");
+
+    checkLinkedNodeModules({ ...gitEnv(process.env), GIT_DIR: gitdir });
+
+    assert.equal(git(main, ["config", "--bool", "core.bare"]), "false", "the main checkout's config must still read core.bare=false");
+    assert.equal(git(land, ["diff", "--cached", "--name-status"]), "", "the linked worktree's index must hold nothing staged");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });
 
