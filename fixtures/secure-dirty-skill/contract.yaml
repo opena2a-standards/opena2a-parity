@@ -13,9 +13,11 @@ participants:
 
 # Fields that must be byte-identical across participating CLIs.
 # Intentionally narrow: it tightens as moving the checks into a shared
-# package closes the known delegation drift. Today opena2a scan reports more
-# findings than hma secure on the same input (opena2a adds its own hygiene
-# checks on top); that drift is known and not yet closed.
+# package closes the known delegation drift. The two CLIs do not report the
+# same findings on this input: opena2a runs its own bundled copy of the
+# hackmyagent scanner, which can be a different version from the hackmyagent
+# under test, and adds hygiene checks of its own. That drift is known and
+# not yet closed.
 must_match:
   - platform
   - projectType
@@ -27,7 +29,7 @@ may_differ:
   - path: timestamp
     reason: "Wall-clock timestamps cannot match across runs. Normalized to empty string."
   - path: findings
-    reason: "Known drift: opena2a scan emits ~2x findings vs hma secure on same input (2026-04-22). Expected to close once the checks move into a shared package; not a current parity violation."
+    reason: "Known drift: the two CLIs do not report the same findings on this input. opena2a runs its own bundled copy of the hackmyagent scanner, which can be a different version from the hackmyagent under test, and adds hygiene checks of its own, so the two lists differ in length and content and the difference changes with the versions in play. Expected to close once the checks move into a shared package; not a current parity violation."
   - path: allFindings
     reason: "Same as findings."
   - path: semanticAnalysis
