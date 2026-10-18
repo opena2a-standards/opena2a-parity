@@ -59,6 +59,27 @@ export function driftModeOn(value: string | undefined): boolean {
   return !["", "0", "false", "no", "off"].includes(normalized);
 }
 
+// The backoff when PARITY_PROBE_BACKOFF_MS is unset, empty or white space only.
+export const DEFAULT_PROBE_BACKOFF_MS = 1500;
+
+// The backoff PARITY_PROBE_BACKOFF_MS holds: the default when it is unset, empty or white space only,
+// the value when it is a whole number of milliseconds, 0 or more, and null for any other value, which
+// main() reports as a usage error. Read with Number() alone, "abc" gave NaN, which Atomics.wait takes
+// as no timeout, so the first transient probe failure never returned, and " " gave a wait of 0.
+export function probeBackoffMs(value: string | undefined): number | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return DEFAULT_PROBE_BACKOFF_MS;
+  return /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+}
+
+// The usage-error line for a PARITY_PROBE_BACKOFF_MS that probeBackoffMs rejects; main() prints it with
+// the missing CLI variables and exits 2.
+export function probeBackoffMessages(env: Record<string, string | undefined>): string[] {
+  const value = env.PARITY_PROBE_BACKOFF_MS;
+  if (probeBackoffMs(value) !== null) return [];
+  return [`env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got ${JSON.stringify(value)}`];
+}
+
 // What the command line asks for. The harness takes no positional argument: --help or -h prints the
 // usage, --version prints the harness version, and any other argument is a usage error, so a misspelt
 // option is reported instead of running the whole gate as if nothing had been given.
@@ -95,7 +116,9 @@ environment variables:
                  Wait in milliseconds before the first retry of a transient probe failure (an
                  operational { error } payload the golden does not expect, or non-JSON output from
                  a command that did start), doubled before the second; such a probe is tried three
-                 times, and a command that could not start is not retried. Default 1500.
+                 times, and a command that could not start is not retried. A whole number, 0 or
+                 more; unset, empty or white space only gives the default, 1500, and any other
+                 value is a usage error.
 
 options:
   --help, -h     print this usage and exit 0
@@ -104,8 +127,9 @@ options:
 exit codes:
   0  every fixture passed, or the usage or the version was printed
   1  a fixture failed
-  2  usage error: a CLI variable unset, empty or white space only, no fixture under fixtures/, or an
-     argument other than the options above`;
+  2  usage error: a CLI variable unset, empty or white space only, a PARITY_PROBE_BACKOFF_MS that is
+     not a whole number of milliseconds, no fixture under fixtures/, or an argument other than the
+     options above`;
 
 // The version --version prints: the version field of this repository's package.json, read when asked
 // so the two cannot drift apart.
@@ -193,7 +217,9 @@ const PROBE_RETRIES = 3;
 // reported by runFixture as a SHAPE failure naming the absent keys.
 export const RETRY_CONDITION =
   "keyed on an operational { error } payload the golden does not expect, or non-JSON output from a command that did start; absent must-match keys are never retried, nor is a command that could not start";
-const PROBE_BACKOFF_MS = Number(process.env.PARITY_PROBE_BACKOFF_MS ?? 1500);
+// main() exits 2 before any probe on a value probeBackoffMs rejects. The default stands in for that
+// value here so a caller that imports probeWithRetry waits a bounded time instead of forever.
+const PROBE_BACKOFF_MS = probeBackoffMs(process.env.PARITY_PROBE_BACKOFF_MS) ?? DEFAULT_PROBE_BACKOFF_MS;
 
 function syncSleep(ms: number): void {
   // The harness is synchronous (execSync), so back off synchronously too.
@@ -1342,9 +1368,9 @@ function main() {
   console.log(`  fixtures dir: ${FIXTURES_DIR}`);
   console.log(`  drift mode:   ${driftModeOn(process.env.INTENTIONAL_DRIFT) ? "ON (expect fail)" : "off"}`);
 
-  const missing = missingBinMessages(process.env);
-  if (missing.length > 0) {
-    for (const line of missing) console.error(line);
+  const usageErrors = [...missingBinMessages(process.env), ...probeBackoffMessages(process.env)];
+  if (usageErrors.length > 0) {
+    for (const line of usageErrors) console.error(line);
     process.exit(2);
   }
   const bins = Object.fromEntries(

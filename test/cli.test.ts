@@ -5,7 +5,18 @@ import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpath
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { binCommand, cliRequest, driftModeOn, fixturesDirMessage, harnessVersion, missingBinMessages, USAGE } from "../src/run-parity.ts";
+import {
+  binCommand,
+  cliRequest,
+  DEFAULT_PROBE_BACKOFF_MS,
+  driftModeOn,
+  fixturesDirMessage,
+  harnessVersion,
+  missingBinMessages,
+  probeBackoffMessages,
+  probeBackoffMs,
+  USAGE,
+} from "../src/run-parity.ts";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -127,6 +138,60 @@ test("npm run parity with a CLI variable that holds only white space exits 2 wit
   assert.equal(r.status, 2, r.stderr);
   assert.equal(r.stderr.trim(), HMA_REQUIRED);
   assert.doesNotMatch(r.stdout + r.stderr, /probe/);
+});
+
+test("probeBackoffMs reads a whole number of milliseconds, gives the default for unset, empty and white space only, and rejects the rest", () => {
+  assert.equal(DEFAULT_PROBE_BACKOFF_MS, 1500);
+  for (const [value, ms] of [["0", 0], ["1", 1], [" 250 ", 250], ["1500", 1500]] as const) assert.equal(probeBackoffMs(value), ms, value);
+  for (const unset of [undefined, "", " ", "\t\n"]) assert.equal(probeBackoffMs(unset), DEFAULT_PROBE_BACKOFF_MS, JSON.stringify(unset));
+  for (const bad of ["abc", "NaN", "-1", "1.5", "1e3", "0x10", "Infinity", "10ms"]) assert.equal(probeBackoffMs(bad), null, bad);
+  assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: "abc" }), [
+    'env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got "abc"',
+  ]);
+  assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: " " }), []);
+  assert.deepEqual(probeBackoffMessages({}), []);
+});
+
+test("npm run parity with a PARITY_PROBE_BACKOFF_MS that is not a whole number exits 2 with one line instead of probing", () => {
+  for (const value of ["abc", "-1"]) {
+    const r = runHarness([], { HMA_BIN: "node hma.js", ...OTHER_BINS, PARITY_PROBE_BACKOFF_MS: value });
+    assert.equal(r.status, 2, r.stderr);
+    assert.equal(r.stderr.trim(), `env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got ${JSON.stringify(value)}`);
+    assert.doesNotMatch(r.stdout + r.stderr, /probe failure|fixture\(s\) run/);
+  }
+});
+
+test("npm run parity reports a rejected PARITY_PROBE_BACKOFF_MS on the same run as a missing CLI variable", () => {
+  const r = runHarness([], { ...OTHER_BINS, PARITY_PROBE_BACKOFF_MS: "abc" });
+  assert.equal(r.status, 2, r.stderr);
+  assert.deepEqual(r.stderr.trim().split("\n"), [
+    HMA_REQUIRED,
+    'env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got "abc"',
+  ]);
+});
+
+test("probeWithRetry imported with PARITY_PROBE_BACKOFF_MS=abc waits the default backoff and returns instead of waiting forever", () => {
+  // "echo hi" started and printed something other than JSON, the transient case; before the fix the
+  // first retry waited NaN ms, which Atomics.wait takes as no timeout.
+  const script = 'import("./src/run-parity.ts").then((m) => { m.probeWithRetry("echo hi", null, "probe"); console.log("returned"); })';
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "-e", script], {
+    cwd: repoRoot,
+    env: { PATH: process.env.PATH, PARITY_PROBE_BACKOFF_MS: "abc" },
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.equal(r.error, undefined, r.stderr);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "returned\n");
+  assert.ok(r.stderr.includes("Retrying in 1500ms"), r.stderr);
+  assert.ok(r.stderr.includes("Retrying in 3000ms"), r.stderr);
+  assert.ok(!r.stderr.includes("NaN"), r.stderr);
+});
+
+test("the usage says which PARITY_PROBE_BACKOFF_MS values give the default and which are a usage error", () => {
+  const flat = USAGE.replace(/\s+/g, " ");
+  assert.ok(flat.includes("A whole number, 0 or more; unset, empty or white space only gives the default, 1500, and any other value is a usage error."), USAGE);
+  assert.ok(flat.includes("a PARITY_PROBE_BACKOFF_MS that is not a whole number of milliseconds"), USAGE);
 });
 
 test("driftModeOn reads 1 and the other common spellings as on, and unset, empty, 0, false, no and off as off", () => {
