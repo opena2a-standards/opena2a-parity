@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { runFixture } from "../src/run-parity.ts";
+import { fixtureNames, runFixture } from "../src/run-parity.ts";
 
 // A CLI that is not one of a fixture's participants is covered by expected/<cli>.skip, which says why
 // it does not exercise the fixture. A CLI with neither used to be skipped without a line, so a fixture
@@ -102,7 +102,7 @@ test("runFixture returns 1 after every leg printed [OK] when the failure is outs
 });
 
 test("every committed fixture covers each CLI with a participant entry or a skip sentinel that says why", () => {
-  const fixtures = readdirSync(join(repoRoot, "fixtures")).filter((name) => existsSync(join(repoRoot, "fixtures", name, "contract.yaml")));
+  const fixtures = fixtureNames(join(repoRoot, "fixtures"));
   assert.ok(fixtures.length > 0, "expected at least one fixtures/*/contract.yaml");
   const uncovered: string[] = [];
   for (const name of fixtures) {

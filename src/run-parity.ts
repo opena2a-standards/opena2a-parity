@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, lstatSync, statSync, type Stats } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, lstatSync, statSync, realpathSync, type Stats } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
@@ -888,8 +888,18 @@ export function runFixture(
   const contractPath = join(fixtureDir, "contract.yaml");
   const expectedDir = join(fixtureDir, "expected");
 
+  // Every directory under fixtures/ is run, so one with no contract.yaml fails here by name. The entries
+  // whose lower-cased name starts with "contract" (contract.yml, Contract.yaml) are named from a listing
+  // of the directory, so the line says what it holds instead of guessing at a misspelling.
   if (!hasEntry(contractPath)) {
-    console.error(`[${fixtureName}] missing contract.yaml`);
+    let found: string[] = [];
+    try {
+      found = readdirSync(fixtureDir).filter((name) => name.toLowerCase().startsWith("contract"));
+    } catch {
+      // a directory that cannot be listed gets the line without them
+    }
+    const hint = found.length > 0 ? ` (found ${found.join(", ")}; the harness reads contract.yaml only)` : "";
+    console.error(`[${fixtureName}] missing contract.yaml${hint}`);
     return 2;
   }
   // The parser throws on a syntax error, a second document, a repeated key and an alias to an anchor
@@ -1206,12 +1216,24 @@ export function runFixtures(
   return failed;
 }
 
-// The fixtures `npm run parity` runs: each entry of fixturesDir that holds a contract.yaml, whatever that
-// is, so runFixture reports one it cannot read. existsSync follows a symbolic link, so a fixture whose
-// contract.yaml was a link that dangles or loops was left out of the run without a line, and the
-// summary counted one fixture fewer.
+// The fixtures `npm run parity` runs: every entry of fixturesDir that is a directory or a symbolic link
+// that resolves to one, in the order readdirSync gives them, whether or not it holds a contract.yaml.
+// runFixture fails one without a contract.yaml by name, and the summary counts it. Selecting on the
+// contract left a fixture whose contract.yaml was deleted or renamed out of the run without a line, and
+// the summary counted one fixture fewer. An entry that is not a directory (a plain file, a symbolic link
+// that dangles or loops) is not a fixture.
 export function fixtureNames(fixturesDir: string): string[] {
-  return readdirSync(fixturesDir).filter((name) => hasEntry(join(fixturesDir, name, "contract.yaml")));
+  return readdirSync(fixturesDir, { withFileTypes: true })
+    .filter((entry) => {
+      if (entry.isDirectory()) return true;
+      if (!entry.isSymbolicLink()) return false;
+      try {
+        return statSync(join(fixturesDir, entry.name)).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+    .map((entry) => entry.name);
 }
 
 function main() {
@@ -1241,8 +1263,17 @@ function main() {
   process.exit(failedFixtures === 0 ? 0 : 1);
 }
 
-// Run the gate only when executed directly (e.g. `npm run parity`). Importing
-// this module (the retry helpers are unit-tested) must not trigger a full run.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
-  main();
+// Whether this module is the script node was started with: both paths resolved through symbolic
+// links and the URL decoded before they are compared. node resolves the entry's links into
+// import.meta.url and percent-encodes it, while process.argv[1] keeps the path as typed, so an
+// unresolved comparison was false through a link or from a path holding a space, and the gate
+// exited 0 having run nothing.
+function isEntryModule(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
+if (isEntryModule()) main();

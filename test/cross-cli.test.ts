@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import { crossCliDiffs, goldensWithoutMustMatchKey, runFixture, type GoldenReader } from "../src/run-parity.ts";
+import { crossCliDiffs, fixtureNames, goldensWithoutMustMatchKey, runFixture, type GoldenReader } from "../src/run-parity.ts";
 
 // Each leg compares one CLI with that CLI's own golden. That alone passes a fixture whose goldens
 // record different values for the same input: it happened in a trial on check-registered-ai, where
@@ -380,7 +380,7 @@ test("a participant with no committed golden fails an assertion naming the fixtu
 });
 
 test("every committed participant golden carries at least one of its fixture's must-match keys", () => {
-  const fixtures = readdirSync(join(repoRoot, "fixtures")).filter((name) => existsSync(join(repoRoot, "fixtures", name, "contract.yaml")));
+  const fixtures = fixtureNames(join(repoRoot, "fixtures"));
   assert.ok(fixtures.length > 0, "expected at least one fixtures/*/contract.yaml");
   let goldens = 0;
   for (const name of fixtures) {
@@ -392,7 +392,7 @@ test("every committed participant golden carries at least one of its fixture's m
 });
 
 test("the committed goldens of every fixture agree on each must-match key across the CLIs that carry it", () => {
-  const fixtures = readdirSync(join(repoRoot, "fixtures")).filter((name) => existsSync(join(repoRoot, "fixtures", name, "contract.yaml")));
+  const fixtures = fixtureNames(join(repoRoot, "fixtures"));
   assert.ok(fixtures.length > 0, "expected at least one fixtures/*/contract.yaml");
   let compared = 0;
   for (const name of fixtures) {
