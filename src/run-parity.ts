@@ -1308,6 +1308,16 @@ export function fixtureNames(fixturesDir: string): string[] {
     .map((entry) => entry.name);
 }
 
+// The one line main prints, before it exits 2, when fixtureNames cannot list fixturesDir. No fixture can
+// run then, as when fixtures/ holds no directory, so it is the same usage error. readdirSync's error
+// reached the top level and ended the run with a stack trace and exit 1.
+export function fixturesDirMessage(fixturesDir: string, err: unknown): string {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  if (code === "ENOENT") return `no fixtures directory at ${fixturesDir}`;
+  if (code === "ENOTDIR") return `${fixturesDir} is not a directory, so it holds no fixtures`;
+  return `cannot list the fixtures directory ${fixturesDir}: ${err instanceof Error ? err.message : String(err)}`;
+}
+
 function main() {
   // The header line comes first on every path, --help, --version and an unexpected argument included,
   // so no run exits 0 without it. The arguments are read before the variable check: --help answers with
@@ -1341,7 +1351,13 @@ function main() {
     Object.entries(BIN_VARS).map(([cli, name]) => [cli, binCommand(process.env[name]) as string]),
   ) as Record<CLI, string>;
 
-  const fixtures = fixtureNames(FIXTURES_DIR);
+  let fixtures: string[];
+  try {
+    fixtures = fixtureNames(FIXTURES_DIR);
+  } catch (err) {
+    console.error(fixturesDirMessage(FIXTURES_DIR, err));
+    process.exit(2);
+  }
 
   if (fixtures.length === 0) {
     console.error("no fixtures found");

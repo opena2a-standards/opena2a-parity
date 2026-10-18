@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { binCommand, cliRequest, driftModeOn, harnessVersion, missingBinMessages, USAGE } from "../src/run-parity.ts";
+import { binCommand, cliRequest, driftModeOn, fixturesDirMessage, harnessVersion, missingBinMessages, USAGE } from "../src/run-parity.ts";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -48,6 +48,56 @@ test("npm run parity without a CLI variable prints one line per variable and exi
   assert.equal(r.status, 2, r.stderr);
   assert.equal(r.stderr.trim(), HMA_REQUIRED);
   assert.doesNotMatch(r.stderr, /^\s+at /m);
+});
+
+test("fixturesDirMessage names the fixtures directory, with the error's own text when it is neither absent nor a file", () => {
+  const enoent = Object.assign(new Error("ENOENT: no such file or directory, scandir '/r/fixtures'"), { code: "ENOENT" });
+  const enotdir = Object.assign(new Error("ENOTDIR: not a directory, scandir '/r/fixtures'"), { code: "ENOTDIR" });
+  const eacces = Object.assign(new Error("EACCES: permission denied, scandir '/r/fixtures'"), { code: "EACCES" });
+  assert.equal(fixturesDirMessage("/r/fixtures", enoent), "no fixtures directory at /r/fixtures");
+  assert.equal(fixturesDirMessage("/r/fixtures", enotdir), "/r/fixtures is not a directory, so it holds no fixtures");
+  assert.equal(
+    fixturesDirMessage("/r/fixtures", eacces),
+    "cannot list the fixtures directory /r/fixtures: EACCES: permission denied, scandir '/r/fixtures'",
+  );
+  assert.equal(fixturesDirMessage("/r/fixtures", "boom"), "cannot list the fixtures directory /r/fixtures: boom");
+});
+
+// The harness reads the fixtures/ beside its src/, so each case starts a copy of it in a scratch root with
+// a node_modules link and either no fixtures entry or a plain file named fixtures. readdirSync's error
+// ended both with a stack trace and exit 1; no fixture can run in either, as when fixtures/ holds no
+// directory, so both exit 2 with one line.
+test("npm run parity with no fixtures/ directory prints one line naming the path and exits 2, without a stack trace", () => {
+  // realpath'd: the copy names its fixtures/ from import.meta.url, which node resolves through links
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "parity-no-fixtures-")));
+  const modules = join(base, "node_modules");
+  const fixtures = join(base, "fixtures");
+  const start = () =>
+    spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "src/run-parity.ts"], {
+      cwd: base,
+      env: { PATH: process.env.PATH, HMA_BIN: "node hma.js", OPENA2A_BIN: "node opena2a.js", AI_TRUST_BIN: "node ai-trust.js" },
+      encoding: "utf8",
+    });
+  try {
+    mkdirSync(join(base, "src"));
+    copyFileSync(join(repoRoot, "src", "run-parity.ts"), join(base, "src", "run-parity.ts"));
+    symlinkSync(join(repoRoot, "node_modules"), modules);
+
+    assert.equal(lstatSync(fixtures, { throwIfNoEntry: false }), undefined, `${fixtures} exists`);
+    const absent = start();
+    assert.equal(absent.status, 2, absent.stderr);
+    assert.ok(absent.stdout.startsWith("opena2a-parity harness\n"), absent.stdout);
+    assert.equal(absent.stderr, `no fixtures directory at ${fixtures}\n`);
+
+    writeFileSync(fixtures, "");
+    const file = start();
+    assert.equal(file.status, 2, file.stderr);
+    assert.ok(file.stdout.startsWith("opena2a-parity harness\n"), file.stdout);
+    assert.equal(file.stderr, `${fixtures} is not a directory, so it holds no fixtures\n`);
+  } finally {
+    if (lstatSync(modules, { throwIfNoEntry: false })) unlinkSync(modules);
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("npm run parity with commands that cannot start reports each leg once, with Node's own line, and exits 1 without a retry", () => {
