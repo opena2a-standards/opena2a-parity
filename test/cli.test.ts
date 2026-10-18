@@ -23,6 +23,11 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 const HMA_REQUIRED = 'env var HMA_BIN is required — e.g. HMA_BIN="node /path/to/dist/cli.js"';
 const OTHER_BINS = { OPENA2A_BIN: "node opena2a.js", AI_TRUST_BIN: "node ai-trust.js" };
+// The line main() prints for a PARITY_PROBE_BACKOFF_MS that probeBackoffMs rejects.
+const backoffRejected = (value: string) =>
+  `env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds from 0 to 9007199254740991 — got ${JSON.stringify(value)}`;
+// A whole number that Number() reads as Infinity.
+const NINES = "9".repeat(400);
 // The first line the harness prints on every path, --help and --version included.
 const HEADER = "opena2a-parity harness\n";
 
@@ -146,18 +151,25 @@ test("probeBackoffMs reads a whole number of milliseconds, gives the default for
   for (const [value, ms] of [["0", 0], ["1", 1], [" 250 ", 250], ["1500", 1500]] as const) assert.equal(probeBackoffMs(value), ms, value);
   for (const unset of [undefined, "", " ", "\t\n"]) assert.equal(probeBackoffMs(unset), DEFAULT_PROBE_BACKOFF_MS, JSON.stringify(unset));
   for (const bad of ["abc", "NaN", "-1", "1.5", "1e3", "0x10", "Infinity", "10ms"]) assert.equal(probeBackoffMs(bad), null, bad);
-  assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: "abc" }), [
-    'env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got "abc"',
-  ]);
+  assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: "abc" }), [backoffRejected("abc")]);
   assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: " " }), []);
   assert.deepEqual(probeBackoffMessages({}), []);
 });
 
-test("npm run parity with a PARITY_PROBE_BACKOFF_MS that is not a whole number exits 2 with one line instead of probing", () => {
-  for (const value of ["abc", "-1"]) {
+test("probeBackoffMs takes a whole number up to Number.MAX_SAFE_INTEGER, 9007199254740991, and rejects a larger one, 400 nines included", () => {
+  assert.equal(probeBackoffMs("9007199254740991"), 9007199254740991);
+  // The bound is on the value, not on the number of digits.
+  assert.equal(probeBackoffMs(`${"0".repeat(400)}1`), 1);
+  for (const big of ["9007199254740992", "9007199254740993", NINES]) assert.equal(probeBackoffMs(big), null, big);
+  assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: NINES }), [backoffRejected(NINES)]);
+  assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: "9007199254740991" }), []);
+});
+
+test("npm run parity with a PARITY_PROBE_BACKOFF_MS that is not a whole number from 0 to 9007199254740991 exits 2 with one line instead of probing", () => {
+  for (const value of ["abc", "-1", "9007199254740992", NINES]) {
     const r = runHarness([], { HMA_BIN: "node hma.js", ...OTHER_BINS, PARITY_PROBE_BACKOFF_MS: value });
     assert.equal(r.status, 2, r.stderr);
-    assert.equal(r.stderr.trim(), `env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got ${JSON.stringify(value)}`);
+    assert.equal(r.stderr.trim(), backoffRejected(value));
     assert.doesNotMatch(r.stdout + r.stderr, /probe failure|fixture\(s\) run/);
   }
 });
@@ -165,10 +177,7 @@ test("npm run parity with a PARITY_PROBE_BACKOFF_MS that is not a whole number e
 test("npm run parity reports a rejected PARITY_PROBE_BACKOFF_MS on the same run as a missing CLI variable", () => {
   const r = runHarness([], { ...OTHER_BINS, PARITY_PROBE_BACKOFF_MS: "abc" });
   assert.equal(r.status, 2, r.stderr);
-  assert.deepEqual(r.stderr.trim().split("\n"), [
-    HMA_REQUIRED,
-    'env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got "abc"',
-  ]);
+  assert.deepEqual(r.stderr.trim().split("\n"), [HMA_REQUIRED, backoffRejected("abc")]);
 });
 
 test("probeWithRetry imported with PARITY_PROBE_BACKOFF_MS=abc waits the default backoff and returns instead of waiting forever", () => {
@@ -189,10 +198,41 @@ test("probeWithRetry imported with PARITY_PROBE_BACKOFF_MS=abc waits the default
   assert.ok(!r.stderr.includes("NaN"), r.stderr);
 });
 
+test("probeWithRetry imported with PARITY_PROBE_BACKOFF_MS of 400 nines waits the default backoff and returns instead of waiting forever", () => {
+  // Number() reads 400 nines as Infinity; before the bound, the first retry printed "Retrying in
+  // Infinityms" and waited with no timeout.
+  const script = 'import("./src/run-parity.ts").then((m) => { m.probeWithRetry("echo hi", null, "probe"); console.log("returned"); })';
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "-e", script], {
+    cwd: repoRoot,
+    env: { PATH: process.env.PATH, PARITY_PROBE_BACKOFF_MS: NINES },
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.equal(r.error, undefined, r.stderr);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "returned\n");
+  assert.ok(r.stderr.includes("Retrying in 1500ms"), r.stderr);
+  assert.ok(r.stderr.includes("Retrying in 3000ms"), r.stderr);
+  assert.ok(!r.stderr.includes("Infinity"), r.stderr);
+});
+
 test("the usage says which PARITY_PROBE_BACKOFF_MS values give the default and which are a usage error", () => {
   const flat = USAGE.replace(/\s+/g, " ");
-  assert.ok(flat.includes("A whole number, 0 or more; unset, empty or white space only gives the default, 1500, and any other value is a usage error."), USAGE);
-  assert.ok(flat.includes("a PARITY_PROBE_BACKOFF_MS that is not a whole number of milliseconds"), USAGE);
+  assert.ok(
+    flat.includes(
+      "A whole number from 0 to 9007199254740991 (Number.MAX_SAFE_INTEGER); unset, empty or white space only gives the default, 1500, and any other value is a usage error.",
+    ),
+    USAGE,
+  );
+  assert.ok(flat.includes("a PARITY_PROBE_BACKOFF_MS that is not a whole number of milliseconds from 0 to 9007199254740991,"), USAGE);
+});
+
+test("README.md states the PARITY_PROBE_BACKOFF_MS bound and the line main() prints for a value outside it", () => {
+  const flat = readFileSync(join(repoRoot, "README.md"), "utf8").replace(/\s+/g, " ");
+  assert.ok(flat.includes("any value other than a whole number from 0 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`) exits 2"), "README.md");
+  // The README quotes the line up to the value it got.
+  const quoted = backoffRejected("abc").replace(/ — got "abc"$/, "");
+  assert.ok(flat.includes(`\`${quoted}\` on stderr`), `README.md does not quote ${JSON.stringify(quoted)}`);
 });
 
 // The attempts a comment gives a leg, one entry per count it states: "<n> attempt(s)" is n attempts and

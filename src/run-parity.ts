@@ -63,14 +63,22 @@ export function driftModeOn(value: string | undefined): boolean {
 // The backoff when PARITY_PROBE_BACKOFF_MS is unset, empty or white space only.
 export const DEFAULT_PROBE_BACKOFF_MS = 1500;
 
+// The largest backoff PARITY_PROBE_BACKOFF_MS takes: Number.MAX_SAFE_INTEGER, 9007199254740991.
+const MAX_PROBE_BACKOFF_MS = Number.MAX_SAFE_INTEGER;
+
 // The backoff PARITY_PROBE_BACKOFF_MS holds: the default when it is unset, empty or white space only,
-// the value when it is a whole number of milliseconds, 0 or more, and null for any other value, which
-// main() reports as a usage error. Read with Number() alone, "abc" gave NaN, which Atomics.wait takes
-// as no timeout, so the first transient probe failure never returned, and " " gave a wait of 0.
+// the value when it is a whole number of milliseconds from 0 to MAX_PROBE_BACKOFF_MS, and null for any
+// other value, which main() reports as a usage error. Read with Number() alone, "abc" gave NaN, which
+// Atomics.wait takes as no timeout, so the first transient probe failure never returned, and " " gave
+// a wait of 0. Checked for digits alone, a run of digits above the largest safe integer passed as well:
+// Number() reads 9007199254740993 as 9007199254740992, and 400 nines as Infinity, which Atomics.wait
+// also takes as no timeout.
 export function probeBackoffMs(value: string | undefined): number | null {
   const trimmed = value?.trim();
   if (!trimmed) return DEFAULT_PROBE_BACKOFF_MS;
-  return /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+  if (!/^\d+$/.test(trimmed)) return null;
+  const ms = Number(trimmed);
+  return Number.isSafeInteger(ms) ? ms : null;
 }
 
 // The usage-error line for a PARITY_PROBE_BACKOFF_MS that probeBackoffMs rejects; main() prints it with
@@ -78,7 +86,9 @@ export function probeBackoffMs(value: string | undefined): number | null {
 export function probeBackoffMessages(env: Record<string, string | undefined>): string[] {
   const value = env.PARITY_PROBE_BACKOFF_MS;
   if (probeBackoffMs(value) !== null) return [];
-  return [`env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got ${JSON.stringify(value)}`];
+  return [
+    `env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds from 0 to ${MAX_PROBE_BACKOFF_MS} — got ${JSON.stringify(value)}`,
+  ];
 }
 
 // What the command line asks for. The harness takes no positional argument: --help or -h prints the
@@ -117,9 +127,9 @@ environment variables:
                  Wait in milliseconds before the first retry of a transient probe failure (an
                  operational { error } payload the golden does not expect, or non-JSON output from
                  a command that did start), doubled before the second; such a probe is tried three
-                 times, and a command that could not start is not retried. A whole number, 0 or
-                 more; unset, empty or white space only gives the default, 1500, and any other
-                 value is a usage error.
+                 times, and a command that could not start is not retried. A whole number from 0
+                 to 9007199254740991 (Number.MAX_SAFE_INTEGER); unset, empty or white space only
+                 gives the default, 1500, and any other value is a usage error.
 
 options:
   --help, -h     print this usage and exit 0
@@ -129,8 +139,8 @@ exit codes:
   0  every fixture passed, or the usage or the version was printed
   1  a fixture failed
   2  usage error: a CLI variable unset, empty or white space only, a PARITY_PROBE_BACKOFF_MS that is
-     not a whole number of milliseconds, no fixture under fixtures/, or an argument other than the
-     options above`;
+     not a whole number of milliseconds from 0 to 9007199254740991, no fixture under fixtures/, or an
+     argument other than the options above`;
 
 // The version --version prints: the version field of this repository's package.json, read when asked
 // so the two cannot drift apart.
