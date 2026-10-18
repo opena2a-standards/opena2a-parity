@@ -43,7 +43,7 @@ export function missingBinMessages(env: Record<string, string | undefined>): str
     .map((name) => `env var ${name} is required — e.g. ${name}="node /path/to/dist/cli.js"`);
 }
 
-function runCli(invocation: string, positionalArg: string | null): { exitCode: number; stdout: string } {
+function runCli(invocation: string, positionalArg: string | null): { exitCode: number; stdout: string; stderr: string } {
   const cmd = positionalArg === null ? invocation : `${invocation} "${positionalArg}"`;
   try {
     const stdout = execSync(cmd, {
@@ -51,11 +51,35 @@ function runCli(invocation: string, positionalArg: string | null): { exitCode: n
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: 64 * 1024 * 1024,
     });
-    return { exitCode: 0, stdout };
+    return { exitCode: 0, stdout, stderr: "" };
   } catch (err) {
-    const e = err as { status?: number; stdout?: string };
-    return { exitCode: e.status ?? 1, stdout: e.stdout ?? "" };
+    const e = err as { status?: number; stdout?: string; stderr?: string };
+    return { exitCode: e.status ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
   }
+}
+
+// A command that could not start: sh's exit 126 (found but cannot be executed) or 127 (not found), or
+// Node's module-resolution error, which Node prints before any of the CLI's own code runs. Either
+// fails the same way on every run, so probeWithRetry reports it after the first attempt instead of
+// retrying it. The reason is the line sh or Node printed for it: the first stderr line that names the
+// failure, or else the first one that is not part of Node's source excerpt, stack or error object. A
+// command that printed anything on stdout did start, whatever its exit code.
+const START_FAILURE_LINE = /^Error:|command not found|cannot execute|is a directory|Permission denied|No such file or directory/;
+const NODE_REPORT_LINE = /^(?:node:internal|throw|\^|at |\{|\})/;
+
+export function startFailureReason(exitCode: number, stdout: string, stderr: string): string | null {
+  if (stdout !== "") return null;
+  if (exitCode !== 126 && exitCode !== 127 && !/Cannot find module|(?:ERR_)?MODULE_NOT_FOUND/.test(stderr)) return null;
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  return (
+    lines.find((line) => START_FAILURE_LINE.test(line)) ??
+    lines.find((line) => !NODE_REPORT_LINE.test(line)) ??
+    lines[0] ??
+    `exit ${exitCode} with nothing on stdout or stderr`
+  );
 }
 
 // A registry-backed probe can fail transiently: ai-trust's registry client has a
@@ -96,7 +120,7 @@ const PROBE_RETRIES = 3;
 // { type, score } where { found, trustLevel, verdict } were expected) is returned unretried and is
 // reported by runFixture as a SHAPE failure naming the absent keys.
 export const RETRY_CONDITION =
-  "keyed on an operational { error } payload the golden does not expect, or non-JSON output only; absent must-match keys are never retried";
+  "keyed on an operational { error } payload the golden does not expect, or non-JSON output from a command that did start; absent must-match keys are never retried, nor is a command that could not start";
 const PROBE_BACKOFF_MS = Number(process.env.PARITY_PROBE_BACKOFF_MS ?? 1500);
 
 function syncSleep(ms: number): void {
@@ -119,27 +143,38 @@ export function isTransientProbeFailure(parsed: unknown, golden?: unknown): bool
   );
 }
 
+type ProbeOutcome = { exitCode: number; stdout: string; stderr: string; parsed: unknown; parseOk: boolean; startFailure: string | null };
+
 // Runs the CLI and parses its JSON, retrying only on a transient probe failure
 // (an operational { error } payload the golden does not expect, or
-// unparseable/empty output). `prepare` (runFixture passes the fixture's
-// normalization) runs on each parsed payload before that decision, and `parsed`
-// is the prepared payload. Returns the last attempt's result regardless, so the
-// caller's comparison still runs.
+// unparseable/empty output from a command that did start). A command that could
+// not start is returned after its first attempt, with startFailureReason's
+// reason as `startFailure`; on every other path `startFailure` is null.
+// `prepare` (runFixture passes the fixture's normalization) runs on each parsed
+// payload before that decision, and `parsed` is the prepared payload. Returns
+// the last attempt's result regardless, so the caller's comparison still runs.
 export function probeWithRetry(
   cmd: string,
   positionalArg: string | null,
   label: string,
   golden?: unknown,
   prepare: (parsed: unknown) => unknown = (parsed) => parsed,
-): { exitCode: number; stdout: string; parsed: unknown; parseOk: boolean } {
-  let last: { exitCode: number; stdout: string; parsed: unknown; parseOk: boolean } = {
+): ProbeOutcome {
+  let last: ProbeOutcome = {
     exitCode: 1,
     stdout: "",
+    stderr: "",
     parsed: undefined,
     parseOk: false,
+    startFailure: null,
   };
   for (let attempt = 1; attempt <= PROBE_RETRIES; attempt++) {
-    const { exitCode, stdout } = runCli(cmd, positionalArg);
+    const { exitCode, stdout, stderr } = runCli(cmd, positionalArg);
+    if (attempt === 1) {
+      // A retry would fail the same way after its backoff, and would hide the reason behind retry lines.
+      const startFailure = startFailureReason(exitCode, stdout, stderr);
+      if (startFailure !== null) return { exitCode, stdout, stderr, parsed: undefined, parseOk: false, startFailure };
+    }
     let parsed: unknown;
     let parseOk = true;
     try {
@@ -148,7 +183,7 @@ export function probeWithRetry(
       parseOk = false;
     }
     if (parseOk) parsed = prepare(parsed);
-    last = { exitCode, stdout, parsed, parseOk };
+    last = { exitCode, stdout, stderr, parsed, parseOk, startFailure: null };
 
     const transient = !parseOk || isTransientProbeFailure(parsed, golden);
     if (!transient || attempt === PROBE_RETRIES) {
@@ -978,9 +1013,21 @@ export function runFixture(
       const shapeGolden = goldens.get(cli);
       // Normalized inside the probe, so the expected-error decision sees what the golden was copied from.
       const fixtureNormalize = (doc: unknown) => normalize(doc, contract.normalize ?? [], fixtureInputDir);
-      const { exitCode, stdout, parsed, parseOk } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden, fixtureNormalize);
+      const { exitCode, stdout, stderr, parsed, parseOk, startFailure } = probeWithRetry(cmd, positionalArg, `${fixtureName} ${cli}`, shapeGolden, fixtureNormalize);
+      // An output that is not JSON fails the leg. The report carries what the leg printed that says why:
+      // for a command that could not start, the line sh or Node printed and the variable that holds the
+      // command; otherwise stdout, or stderr where stdout is blank.
       if (!parseOk) {
-        console.error(`[${fixtureName}] ${cli} produced non-JSON output (exit=${exitCode}). First 400 chars:\n${stdout.slice(0, 400)}`);
+        if (startFailure !== null) {
+          console.error(`[${fixtureName}] ${cli} could not start (exit=${exitCode}): ${startFailure}`);
+          console.error(`  ${BIN_VARS[cli]}="${bins[cli]}" is the command the harness ran through sh (README.md "Quickstart").`);
+        } else if (stdout.trim() !== "") {
+          console.error(`[${fixtureName}] ${cli} produced non-JSON output (exit=${exitCode}). First 400 chars:\n${stdout.slice(0, 400)}`);
+        } else if (stderr.trim() !== "") {
+          console.error(`[${fixtureName}] ${cli} produced no output on stdout (exit=${exitCode}). stderr (first 400 chars):\n${stderr.slice(0, 400)}`);
+        } else {
+          console.error(`[${fixtureName}] ${cli} produced no output on stdout or stderr (exit=${exitCode}).`);
+        }
         failures++;
         continue;
       }

@@ -4,7 +4,7 @@ import fs, { writeFileSync, readFileSync, mkdtempSync, mkdirSync, rmSync, exists
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isTransientProbeFailure, probeWithRetry, runFixture, runFixtures, unexpectedErrorReport, type GoldenReader } from "../src/run-parity.ts";
+import { isTransientProbeFailure, probeWithRetry, runFixture, runFixtures, startFailureReason, unexpectedErrorReport, type GoldenReader } from "../src/run-parity.ts";
 
 test("isTransientProbeFailure fires only on an operational error payload", () => {
   // the exact timeout shape ai-trust emits
@@ -151,6 +151,118 @@ process.exit(2);
   }
 });
 
+// A command that could not start fails the same way on every run, so the probe returns it after the
+// first attempt with the line Node or the shell printed for it, instead of retrying it.
+test("startFailureReason returns the line sh or Node printed for a command that could not start, and null for one that started", () => {
+  // what Node 24 prints for a main module that does not exist, with two of its stack lines
+  const missingMain = [
+    "node:internal/modules/cjs/loader:1568",
+    "  throw err;",
+    "  ^",
+    "",
+    "Error: Cannot find module '/nonexistent/hackmyagent/dist/cli.js'",
+    "    at Module._resolveFilename (node:internal/modules/cjs/loader:1564:15)",
+    "    at node:internal/main/run_main_module:33:47 {",
+    "  code: 'MODULE_NOT_FOUND',",
+    "  requireStack: []",
+    "}",
+    "",
+    "Node.js v24.22.0",
+    "",
+  ].join("\n");
+  assert.equal(startFailureReason(1, "", missingMain), "Error: Cannot find module '/nonexistent/hackmyagent/dist/cli.js'");
+  // an import Node cannot resolve: its error line does not start with "Error:", so it is the first line
+  // that is not part of the source excerpt
+  const missingImport = [
+    "node:internal/modules/package_json_reader:331",
+    "  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);",
+    "        ^",
+    "",
+    "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'yaml' imported from /work/cli.mjs",
+    "    at packageResolve (node:internal/modules/esm/resolve:784:25) {",
+    "  code: 'ERR_MODULE_NOT_FOUND'",
+    "}",
+  ].join("\n");
+  assert.equal(startFailureReason(1, "", missingImport), "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'yaml' imported from /work/cli.mjs");
+  // sh's own line, as bash (the /bin/sh of macOS) and dash (the /bin/sh of Debian and Ubuntu) word it
+  assert.equal(startFailureReason(127, "", "sh: hma: command not found\n"), "sh: hma: command not found");
+  assert.equal(startFailureReason(127, "", "/bin/sh: 1: hma: not found\n"), "/bin/sh: 1: hma: not found");
+  assert.equal(startFailureReason(126, "", "sh: /opt/hma: is a directory\n"), "sh: /opt/hma: is a directory");
+  assert.equal(startFailureReason(127, "", ""), "exit 127 with nothing on stdout or stderr");
+  // a command that printed on stdout, or that failed without such a line, did start
+  assert.equal(startFailureReason(127, "{}\n", "sh: hma: command not found\n"), null);
+  assert.equal(startFailureReason(1, "partial", missingMain), null);
+  assert.equal(startFailureReason(1, "", "boom\n"), null);
+  assert.equal(startFailureReason(0, "", ""), null);
+});
+
+test("probeWithRetry does not retry a command whose module Node cannot find, and returns Node's own line", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-missing-"));
+  const logged: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    const r = probeWithRetry("node " + join(dir, "missing.mjs"), null, "test missing");
+    console.error = origError;
+    assert.equal(r.parseOk, false);
+    assert.equal(r.exitCode, 1);
+    assert.match(r.startFailure ?? "", /Cannot find module/, logged.join("\n"));
+    assert.deepEqual(logged.filter((l) => /transient probe failure|probe still failing/.test(l)), []);
+  } finally {
+    console.error = origError;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("probeWithRetry does not retry a command that is not on PATH, and returns the shell's own line", () => {
+  const name = `parity-no-such-command-${process.pid}`;
+  const logged: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    const r = probeWithRetry(name, null, "test not on PATH");
+    console.error = origError;
+    assert.equal(r.parseOk, false);
+    assert.equal(r.exitCode, 127);
+    // bash, the /bin/sh of macOS, says "command not found"; dash, the /bin/sh of Debian and Ubuntu, says "not found"
+    assert.match(r.startFailure ?? "", new RegExp(`${name}: (?:command )?not found`), logged.join("\n"));
+    assert.deepEqual(logged.filter((l) => /transient probe failure|probe still failing/.test(l)), []);
+  } finally {
+    console.error = origError;
+  }
+});
+
+test("probeWithRetry still retries a command that started and printed something other than JSON", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-boom-"));
+  const counter = join(dir, "n");
+  const bin = join(dir, "boom.mjs");
+  writeFileSync(counter, "0");
+  // Counts its invocations, prints text that is not JSON and exits 1: a CLI can fail that way after it started.
+  writeFileSync(bin, `
+import { readFileSync, writeFileSync } from "node:fs";
+const c = Number(readFileSync(${JSON.stringify(counter)}, "utf8"));
+writeFileSync(${JSON.stringify(counter)}, String(c + 1));
+console.log("boom");
+process.exitCode = 1;
+`);
+  const logged: string[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    const r = probeWithRetry(`node ${bin}`, null, "test boom");
+    console.error = origError;
+    assert.equal(readFileSync(counter, "utf8"), "3");
+    assert.equal(r.parseOk, false);
+    assert.equal(r.exitCode, 1);
+    assert.equal(logged.filter((l) => l.includes("transient probe failure")).length, 2, logged.join("\n"));
+    assert.ok(logged.some((l) => l.includes("probe still failing after 3 attempts")), logged.join("\n"));
+    assert.equal(r.startFailure, null);
+  } finally {
+    console.error = origError;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // The stub fixtures below have hma as their only participant; the harness fails a fixture that leaves
 // a CLI out without a sentinel, so opena2a and ai-trust each get one.
 function writeSkipSentinels(fixture: string): void {
@@ -219,6 +331,8 @@ process.exit(1);
 // `encode` turns the golden and the payload into JSON text; `String` hands over text as it is.
 // `peer`, for a contract that also lists opena2a, is that participant's golden and the payload its
 // stub prints with exit 0. `readGolden`, when given, replaces the harness's own golden reader.
+// `hmaCommand`, when given, returns the command hma runs as, given the temporary directory, in place
+// of the counting stub.
 function runStubFixture(
   contract: string,
   golden: unknown,
@@ -227,6 +341,7 @@ function runStubFixture(
   encode: (value: unknown) => string = (value) => JSON.stringify(value),
   peer?: { golden: unknown; payload: unknown },
   readGolden?: GoldenReader,
+  hmaCommand?: (dir: string) => string,
 ): { rc: number; invocations: number; logged: string[]; capture: string | undefined } {
   const dir = mkdtempSync(join(tmpdir(), "parity-stub-fixture-"));
   const fixture = join(dir, "fixtures", "stub");
@@ -258,7 +373,7 @@ process.exitCode = ${exit};
   try {
     const rc = runFixture(
       "stub",
-      { hma: `node ${bin}`, opena2a: peer ? `node ${peerBin}` : "unused", "ai-trust": "unused" },
+      { hma: hmaCommand ? hmaCommand(dir) : `node ${bin}`, opena2a: peer ? `node ${peerBin}` : "unused", "ai-trust": "unused" },
       { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") },
       readGolden,
     );
@@ -290,6 +405,30 @@ may_differ:
   - path: error
     reason: wording differs between CLIs
 `;
+
+test("runFixture reports a command that could not start once, with Node's own line and the variable that holds the command", () => {
+  const r = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, NOT_FOUND_GOLDEN, 1, undefined, undefined, undefined, (dir) => `node ${join(dir, "missing.mjs")}`);
+  assert.equal(r.rc, 1, r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => /hma could not start \(exit=1\): Error: Cannot find module/.test(l)), r.logged.join("\n"));
+  assert.ok(r.logged.some((l) => l.includes('HMA_BIN="node ') && l.includes("is the command the harness ran through sh")), r.logged.join("\n"));
+  assert.ok(!r.logged.some((l) => /First 400 chars|transient probe failure|probe still failing/.test(l)), r.logged.join("\n"));
+});
+
+test("runFixture shows stderr for a command that started and printed nothing on stdout, and says when it printed nothing at all", () => {
+  // Each stub starts and exits 1, so its leg keeps its retries; the report says what the last attempt printed.
+  const stub = (name: string, source: string) => (dir: string) => {
+    writeFileSync(join(dir, name), source);
+    return `node ${join(dir, name)}`;
+  };
+  const stderrOnly = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, NOT_FOUND_GOLDEN, 1, undefined, undefined, undefined, stub("stderr-only.mjs", `console.error("fatal: no config"); process.exitCode = 1;`));
+  assert.equal(stderrOnly.rc, 1, stderrOnly.logged.join("\n"));
+  assert.ok(stderrOnly.logged.some((l) => l.includes("probe still failing after 3 attempts")), stderrOnly.logged.join("\n"));
+  assert.ok(stderrOnly.logged.includes("[stub] hma produced no output on stdout (exit=1). stderr (first 400 chars):\nfatal: no config\n"), stderrOnly.logged.join("\n"));
+  const silent = runStubFixture(NOT_FOUND_CONTRACT, NOT_FOUND_GOLDEN, NOT_FOUND_GOLDEN, 1, undefined, undefined, undefined, stub("silent.mjs", "process.exitCode = 1;"));
+  assert.equal(silent.rc, 1, silent.logged.join("\n"));
+  assert.ok(silent.logged.includes("[stub] hma produced no output on stdout or stderr (exit=1)."), silent.logged.join("\n"));
+  for (const r of [stderrOnly, silent]) assert.ok(!r.logged.some((l) => /First 400 chars|could not start \(/.test(l)), r.logged.join("\n"));
+});
 
 test("runFixture fails the leg when a reworded error still differs from the golden's after the last attempt", () => {
   const reworded = { ...NOT_FOUND_GOLDEN, error: 'No package named "ghost" on npm.' };
