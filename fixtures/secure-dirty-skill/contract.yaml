@@ -16,8 +16,8 @@ participants:
 # package closes the known delegation drift. The two CLIs do not report the
 # same findings on this input: opena2a runs its own bundled copy of the
 # hackmyagent scanner, which can be a different version from the hackmyagent
-# under test, and adds hygiene checks of its own. That drift is known and
-# not yet closed.
+# under test. Compare hackmyagentVersion in the two captures under actual/ to
+# see the versions in play. That drift is known and not yet closed.
 must_match:
   - platform
   - projectType
@@ -29,7 +29,7 @@ may_differ:
   - path: timestamp
     reason: "Wall-clock timestamps cannot match across runs. Normalized to empty string."
   - path: findings
-    reason: "Known drift: the two CLIs do not report the same findings on this input. opena2a runs its own bundled copy of the hackmyagent scanner, which can be a different version from the hackmyagent under test, and adds hygiene checks of its own, so the two lists differ in length and content and the difference changes with the versions in play. Expected to close once the checks move into a shared package; not a current parity violation."
+    reason: "Known drift: the two CLIs do not report the same findings on this input. opena2a runs its own bundled copy of the hackmyagent scanner, which can be a different version from the hackmyagent under test, so the two lists differ in length and content and the difference changes with the versions in play. Expected to close once the checks move into a shared package; not a current parity violation."
   - path: allFindings
     reason: "Same as findings."
   - path: semanticAnalysis

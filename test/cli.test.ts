@@ -5,7 +5,19 @@ import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpath
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { binCommand, cliRequest, driftModeOn, fixturesDirMessage, harnessVersion, missingBinMessages, USAGE } from "../src/run-parity.ts";
+import {
+  binCommand,
+  cliRequest,
+  DEFAULT_PROBE_BACKOFF_MS,
+  driftModeOn,
+  fixturesDirMessage,
+  harnessVersion,
+  missingBinMessages,
+  probeBackoffMessages,
+  probeBackoffMs,
+  runFixtures,
+  USAGE,
+} from "../src/run-parity.ts";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -127,6 +139,125 @@ test("npm run parity with a CLI variable that holds only white space exits 2 wit
   assert.equal(r.status, 2, r.stderr);
   assert.equal(r.stderr.trim(), HMA_REQUIRED);
   assert.doesNotMatch(r.stdout + r.stderr, /probe/);
+});
+
+test("probeBackoffMs reads a whole number of milliseconds, gives the default for unset, empty and white space only, and rejects the rest", () => {
+  assert.equal(DEFAULT_PROBE_BACKOFF_MS, 1500);
+  for (const [value, ms] of [["0", 0], ["1", 1], [" 250 ", 250], ["1500", 1500]] as const) assert.equal(probeBackoffMs(value), ms, value);
+  for (const unset of [undefined, "", " ", "\t\n"]) assert.equal(probeBackoffMs(unset), DEFAULT_PROBE_BACKOFF_MS, JSON.stringify(unset));
+  for (const bad of ["abc", "NaN", "-1", "1.5", "1e3", "0x10", "Infinity", "10ms"]) assert.equal(probeBackoffMs(bad), null, bad);
+  assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: "abc" }), [
+    'env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got "abc"',
+  ]);
+  assert.deepEqual(probeBackoffMessages({ PARITY_PROBE_BACKOFF_MS: " " }), []);
+  assert.deepEqual(probeBackoffMessages({}), []);
+});
+
+test("npm run parity with a PARITY_PROBE_BACKOFF_MS that is not a whole number exits 2 with one line instead of probing", () => {
+  for (const value of ["abc", "-1"]) {
+    const r = runHarness([], { HMA_BIN: "node hma.js", ...OTHER_BINS, PARITY_PROBE_BACKOFF_MS: value });
+    assert.equal(r.status, 2, r.stderr);
+    assert.equal(r.stderr.trim(), `env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got ${JSON.stringify(value)}`);
+    assert.doesNotMatch(r.stdout + r.stderr, /probe failure|fixture\(s\) run/);
+  }
+});
+
+test("npm run parity reports a rejected PARITY_PROBE_BACKOFF_MS on the same run as a missing CLI variable", () => {
+  const r = runHarness([], { ...OTHER_BINS, PARITY_PROBE_BACKOFF_MS: "abc" });
+  assert.equal(r.status, 2, r.stderr);
+  assert.deepEqual(r.stderr.trim().split("\n"), [
+    HMA_REQUIRED,
+    'env var PARITY_PROBE_BACKOFF_MS must be a whole number of milliseconds, 0 or more — got "abc"',
+  ]);
+});
+
+test("probeWithRetry imported with PARITY_PROBE_BACKOFF_MS=abc waits the default backoff and returns instead of waiting forever", () => {
+  // "echo hi" started and printed something other than JSON, the transient case; before the fix the
+  // first retry waited NaN ms, which Atomics.wait takes as no timeout.
+  const script = 'import("./src/run-parity.ts").then((m) => { m.probeWithRetry("echo hi", null, "probe"); console.log("returned"); })';
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "-e", script], {
+    cwd: repoRoot,
+    env: { PATH: process.env.PATH, PARITY_PROBE_BACKOFF_MS: "abc" },
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.equal(r.error, undefined, r.stderr);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "returned\n");
+  assert.ok(r.stderr.includes("Retrying in 1500ms"), r.stderr);
+  assert.ok(r.stderr.includes("Retrying in 3000ms"), r.stderr);
+  assert.ok(!r.stderr.includes("NaN"), r.stderr);
+});
+
+test("the usage says which PARITY_PROBE_BACKOFF_MS values give the default and which are a usage error", () => {
+  const flat = USAGE.replace(/\s+/g, " ");
+  assert.ok(flat.includes("A whole number, 0 or more; unset, empty or white space only gives the default, 1500, and any other value is a usage error."), USAGE);
+  assert.ok(flat.includes("a PARITY_PROBE_BACKOFF_MS that is not a whole number of milliseconds"), USAGE);
+});
+
+// The attempts a comment gives a leg, one entry per count it states: "<n> attempt(s)" is n attempts and
+// "<n> retry" or "<n> retries" is n + 1, where n is digits or one of no, zero, one, two, three, four and
+// five. Other wording is not read, so a comment that states no such count passes whatever else it says.
+const COUNT_WORDS: Record<string, number> = { no: 0, zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5 };
+function attemptCounts(comment: string): number[] {
+  return [...comment.matchAll(/\b(\d+|no|zero|one|two|three|four|five) (attempts?|retry|retries)\b/gi)].map(([, count, noun]) => {
+    const n = COUNT_WORDS[count.toLowerCase()] ?? Number(count);
+    return /^retr/i.test(noun) ? n + 1 : n;
+  });
+}
+
+// The path binCommand's comment recounts: before binCommand, main() handed HMA_BIN=" " to runFixtures as
+// the command. Here each CLI's command is " " on a one-fixture root whose exercise names a program that
+// is not on PATH, so sh exits 127 on every leg.
+test("a white-space-only command read as set gets one attempt per leg, reported as could not start with exit 127, and binCommand's comment gives no other count", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-cli-blank-"));
+  const fixture = join(dir, "fixtures", "stub");
+  mkdirSync(join(fixture, "expected"), { recursive: true });
+  const clis = ["hma", "opena2a", "ai-trust"];
+  writeFileSync(join(fixture, "contract.yaml"), [
+    "description: white-space-only command stub",
+    "kind: package-name",
+    "package: ghost",
+    "exercises:",
+    ...clis.map((cli) => `  ${cli}: "{BIN} parity-no-such-command-${process.pid} {PACKAGE} --json"`),
+    "participants:",
+    ...clis.map((cli) => `  - ${cli}`),
+    "must_match:",
+    "  - found",
+    "may_differ: []",
+    "",
+  ].join("\n"));
+  for (const cli of clis) writeFileSync(join(fixture, "expected", `${cli}.json`), JSON.stringify({ found: false }));
+  const logged: string[] = [];
+  const origError = console.error;
+  const origLog = console.log;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  let failed = 0;
+  try {
+    failed = runFixtures(["stub"], { hma: " ", opena2a: " ", "ai-trust": " " }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
+  } finally {
+    console.error = origError;
+    console.log = origLog;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // one failed fixture, for which main() exits 1
+  assert.equal(failed, 1, logged.join("\n"));
+  for (const cli of clis) {
+    assert.equal(logged.filter((l) => l.startsWith(`[stub] ${cli} could not start (exit=127): `)).length, 1, logged.join("\n"));
+  }
+  // probeWithRetry prints "transient probe failure" before each retry, and no leg printed it: each made one attempt
+  assert.deepEqual(logged.filter((l) => /transient probe failure|probe still failing/.test(l)), []);
+  // the comment once gave this account of the path, which counts three
+  assert.deepEqual(attemptCounts("each leg failed its three attempts with exit 127"), [3]);
+  const lines = readFileSync(join(repoRoot, "src", "run-parity.ts"), "utf8").split("\n");
+  const declared = lines.findIndex((l) => l.startsWith("export function binCommand("));
+  assert.ok(declared > 0, "src/run-parity.ts does not declare binCommand");
+  let first = declared;
+  while (first > 0 && lines[first - 1].startsWith("//")) first--;
+  // the comment wraps across lines, so read it as one
+  const comment = lines.slice(first, declared).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
+  assert.deepEqual(attemptCounts(comment).filter((n) => n !== 1), [], comment);
 });
 
 test("driftModeOn reads 1 and the other common spellings as on, and unset, empty, 0, false, no and off as off", () => {
