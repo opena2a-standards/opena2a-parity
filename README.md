@@ -4,6 +4,10 @@ Parity gate for the three OpenA2A CLIs: `hackmyagent`, `opena2a` and `ai-trust`.
 
 ## Quickstart
 
+Node 24 or later is required: `engines` in `package.json` is `>=24.0.0`, and the harness runs its TypeScript source through `node --experimental-strip-types`.
+
+Each variable below holds the command that runs one CLI. Build the three first: clone `opena2a-org/hackmyagent`, `opena2a-org/opena2a` and `opena2a-org/ai-trust`, run `npm ci && npm run build` in each checkout, as the CI workflow does, and point the variables at the built files. A variable is a shell command string, so it can also hold `npx <package>@<version>` for a published version of a CLI.
+
 ```
 npm install
 HMA_BIN="node /path/to/hackmyagent/dist/cli.js" \
@@ -29,6 +33,10 @@ The harness checks that the three CLIs, given the same input, hold identical val
 
 It exits 0 when every fixture passes, 1 when any fails, and 2 when `HMA_BIN`, `OPENA2A_BIN` or `AI_TRUST_BIN` is unset or empty or when `fixtures/` holds no directory. A directory under `fixtures/` with no `contract.yaml` is run and fails with `[<name>] missing contract.yaml`. Started by any path, including through a symbolic link or from a directory whose name holds a space, the harness prints the `opena2a-parity harness` header first and never exits 0 without it.
 
+A variable that holds only white space counts as unset. An argument other than `--help`, `-h` and `--version` also exits 2, with `unexpected argument: <argument>` on stderr and no fixture run.
+
+`npm run parity -- --help` (or `-h`) prints the usage under the `opena2a-parity harness` header: the three variables, `INTENTIONAL_DRIFT`, `PARITY_PROBE_BACKOFF_MS` and the exit codes. `npm run parity -- --version` prints the harness version from `package.json` under the same header. Both exit 0 and run no fixture.
+
 In CI, the workflow sets these env vars from freshly-built CLIs and calls the same script.
 
 A failing run shows as a failing check on the PR, which blocks the merge only where that CLI's repository lists `parity / parity` as a required status check on `main`.
@@ -51,7 +59,7 @@ Run the harness against the changed CLI, check that every drifted field in its c
 
 ## Intentional-drift demo
 
-`npm run parity:drift-demo` — sets `INTENTIONAL_DRIFT=1`, which the harness applies by mutating one must-match field in the captured output.
+`npm run parity:drift-demo` — sets `INTENTIONAL_DRIFT=1`, which the harness applies by mutating one must-match field in the captured output. Any value other than empty or white space only, `0`, `false`, `no` and `off`, in any letter case, turns drift mode on as well, and the `drift mode:` header line reports which way the value was read.
 
 Expected exit code: non-zero with a clear diff. Used to prove the gate is live.
 

@@ -35,12 +35,84 @@ type ProbeResult = {
 
 const BIN_VARS: Record<CLI, string> = { hma: "HMA_BIN", opena2a: "OPENA2A_BIN", "ai-trust": "AI_TRUST_BIN" };
 
-// One line per CLI variable that is unset or empty. main() prints them and exits 2, as it does for
-// "no fixtures found": a missing variable is a usage error, not a crash with a stack trace.
+// The command a CLI variable holds, without the white space around it, or undefined for a variable
+// that is unset, empty or white space only. HMA_BIN=" " is as unusable as HMA_BIN="", but read as set
+// it went to the probe path, where each leg failed its three attempts with exit 127 and the run ended 1.
+export function binCommand(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+// One line per CLI variable that is unset, empty or white space only. main() prints them and exits 2,
+// as it does for "no fixtures found": a missing variable is a usage error, not a crash with a stack trace.
 export function missingBinMessages(env: Record<string, string | undefined>): string[] {
   return Object.values(BIN_VARS)
-    .filter((name) => !env[name])
+    .filter((name) => binCommand(env[name]) === undefined)
     .map((name) => `env var ${name} is required — e.g. ${name}="node /path/to/dist/cli.js"`);
+}
+
+// INTENTIONAL_DRIFT is a switch: unset, empty or white space only, "0", "false", "no" and "off", in any
+// letter case, leave drift mode off; any other value turns it on. Read as on only when it was exactly
+// "1", INTENTIONAL_DRIFT=true printed "drift mode: off" and ran the normal gate.
+export function driftModeOn(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return !["", "0", "false", "no", "off"].includes(normalized);
+}
+
+// What the command line asks for. The harness takes no positional argument: --help or -h prints the
+// usage, --version prints the harness version, and any other argument is a usage error, so a misspelt
+// option is reported instead of running the whole gate as if nothing had been given.
+export type CliRequest = { kind: "run" } | { kind: "help" } | { kind: "version" } | { kind: "unknown"; argument: string };
+
+export function cliRequest(args: string[]): CliRequest {
+  if (args.some((arg) => arg === "--help" || arg === "-h")) return { kind: "help" };
+  if (args.length === 0) return { kind: "run" };
+  if (args.length === 1 && args[0] === "--version") return { kind: "version" };
+  // The first argument that is not --version, or the repeat when --version was given more than once.
+  return { kind: "unknown", argument: args.find((arg) => arg !== "--version") ?? args[1] };
+}
+
+// The usage --help prints: the three CLI variables, the two optional variables, the options and the
+// exit codes, so a reader has the whole surface without opening README.md.
+export const USAGE = `usage: npm run parity [-- --help | --version]
+       node --experimental-strip-types src/run-parity.ts [--help | --version]
+
+Runs each fixture under fixtures/ against the three CLIs and compares the keys its contract.yaml
+lists under must_match: each CLI's output with that CLI's golden, then the CLIs with each other.
+Captures are written under actual/<fixture>/<cli>.json.
+
+environment variables:
+  HMA_BIN        command that runs hackmyagent, e.g. "node /path/to/hackmyagent/dist/cli.js"
+  OPENA2A_BIN    command that runs opena2a, e.g. "node /path/to/opena2a/packages/cli/dist/index.js"
+  AI_TRUST_BIN   command that runs ai-trust, e.g. "node /path/to/ai-trust/dist/index.js"
+                 Each is a shell command string; the fixture's command line is built around it.
+  INTENTIONAL_DRIFT=1
+                 Drift mode, which npm run parity:drift-demo sets: "+drift-demo" is appended to the
+                 platform value of each opena2a capture that has one, so the gate is expected to fail.
+                 Unset, empty or white space only, 0, false, no and off, in any letter case, leave
+                 it off; any other value turns it on.
+  PARITY_PROBE_BACKOFF_MS
+                 Wait in milliseconds before the first retry of a transient probe failure (an
+                 operational { error } payload the golden does not expect, or non-JSON output from
+                 a command that did start), doubled before the second; such a probe is tried three
+                 times, and a command that could not start is not retried. Default 1500.
+
+options:
+  --help, -h     print this usage and exit 0
+  --version      print the harness version and exit 0
+
+exit codes:
+  0  every fixture passed, or the usage or the version was printed
+  1  a fixture failed
+  2  usage error: a CLI variable unset, empty or white space only, no fixture under fixtures/, or an
+     argument other than the options above`;
+
+// The version --version prints: the version field of this repository's package.json, read when asked
+// so the two cannot drift apart.
+export function harnessVersion(packageJsonPath: string = join(REPO_ROOT, "package.json")): string {
+  const { version } = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: unknown };
+  if (typeof version !== "string") throw new Error(`${packageJsonPath} carries no version string`);
+  return version;
 }
 
 function runCli(invocation: string, positionalArg: string | null): { exitCode: number; stdout: string; stderr: string } {
@@ -599,7 +671,7 @@ function normalize(parsed: unknown, rules: FixtureContract["normalize"], fixture
 }
 
 function applyIntentionalDrift(obj: unknown, cli: CLI): unknown {
-  if (process.env.INTENTIONAL_DRIFT !== "1") return obj;
+  if (!driftModeOn(process.env.INTENTIONAL_DRIFT)) return obj;
   if (cli !== "opena2a") return obj;
   // A payload is any JSON value, the literal null included, and null has no key to read.
   const cloned = structuredClone(obj) as Record<string, unknown> | null;
@@ -1237,9 +1309,28 @@ export function fixtureNames(fixturesDir: string): string[] {
 }
 
 function main() {
+  // The header line comes first on every path, --help, --version and an unexpected argument included,
+  // so no run exits 0 without it. The arguments are read before the variable check: --help answers with
+  // the variables unset, and an unexpected argument is reported instead of being ignored while the whole
+  // gate runs.
   console.log("opena2a-parity harness");
+  const request = cliRequest(process.argv.slice(2));
+  if (request.kind === "help") {
+    console.log(USAGE);
+    process.exit(0);
+  }
+  if (request.kind === "version") {
+    console.log(harnessVersion());
+    process.exit(0);
+  }
+  if (request.kind === "unknown") {
+    console.error(`unexpected argument: ${request.argument}`);
+    console.error("the harness takes no argument other than --help, -h and --version; --help prints the usage");
+    process.exit(2);
+  }
+
   console.log(`  fixtures dir: ${FIXTURES_DIR}`);
-  console.log(`  drift mode:   ${process.env.INTENTIONAL_DRIFT === "1" ? "ON (expect fail)" : "off"}`);
+  console.log(`  drift mode:   ${driftModeOn(process.env.INTENTIONAL_DRIFT) ? "ON (expect fail)" : "off"}`);
 
   const missing = missingBinMessages(process.env);
   if (missing.length > 0) {
@@ -1247,7 +1338,7 @@ function main() {
     process.exit(2);
   }
   const bins = Object.fromEntries(
-    Object.entries(BIN_VARS).map(([cli, name]) => [cli, process.env[name] as string]),
+    Object.entries(BIN_VARS).map(([cli, name]) => [cli, binCommand(process.env[name]) as string]),
   ) as Record<CLI, string>;
 
   const fixtures = fixtureNames(FIXTURES_DIR);
