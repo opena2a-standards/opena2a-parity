@@ -64,7 +64,9 @@ to `may_differ`, with the reason.
 An `error` in a CLI's output is checked against that CLI's own golden, after normalization,
 even where the contract lists `error` under `may_differ` (which lets the wording differ between
 CLIs). An error the golden does not record is tried up to three times (two retries), and if it
-still differs after the last attempt the leg fails. On `check-not-found`, ai-trust's registry timeout carries
+still differs after the last attempt the leg fails. A command that could not start (sh's exit 126
+or 127, or Node's module-resolution error with nothing on stdout) is reported once, with the
+shell's or Node's own line, and is not retried. On `check-not-found`, ai-trust's registry timeout carries
 the same `name`, `found` and `ecosystem` as a real not-found, so the error is what tells them
 apart. hackmyagent's payload for an unreachable registry (a timeout, a 5xx and a network error
 share one payload) carries `name` and `found: false` but no `ecosystem`, so its leg fails as a

@@ -156,6 +156,7 @@ test("the retry's own log line says which condition it is keyed on", () => {
   assert.match(RETRY_CONDITION, /operational \{ error \} payload/);
   assert.match(RETRY_CONDITION, /non-JSON/);
   assert.match(RETRY_CONDITION, /absent must-match keys are never retried/);
+  assert.match(RETRY_CONDITION, /could not start/);
   const dir = mkdtempSync(join(tmpdir(), "parity-retryline-"));
   const bin = join(dir, "timeout.mjs");
   writeFileSync(bin, `console.log(JSON.stringify({ found: false, error: "Registry request timed out after 10000ms" })); process.exit(1);`);
