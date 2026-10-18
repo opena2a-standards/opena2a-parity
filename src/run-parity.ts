@@ -37,7 +37,8 @@ const BIN_VARS: Record<CLI, string> = { hma: "HMA_BIN", opena2a: "OPENA2A_BIN", 
 
 // The command a CLI variable holds, without the white space around it, or undefined for a variable
 // that is unset, empty or white space only. HMA_BIN=" " is as unusable as HMA_BIN="", but read as set
-// it went to the probe path, where each leg failed its three attempts with exit 127 and the run ended 1.
+// it went to the probe path, where each leg was reported once as could not start (exit=127) and the
+// run ended 1.
 export function binCommand(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;

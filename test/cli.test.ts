@@ -15,6 +15,7 @@ import {
   missingBinMessages,
   probeBackoffMessages,
   probeBackoffMs,
+  runFixtures,
   USAGE,
 } from "../src/run-parity.ts";
 
@@ -192,6 +193,71 @@ test("the usage says which PARITY_PROBE_BACKOFF_MS values give the default and w
   const flat = USAGE.replace(/\s+/g, " ");
   assert.ok(flat.includes("A whole number, 0 or more; unset, empty or white space only gives the default, 1500, and any other value is a usage error."), USAGE);
   assert.ok(flat.includes("a PARITY_PROBE_BACKOFF_MS that is not a whole number of milliseconds"), USAGE);
+});
+
+// The attempts a comment gives a leg, one entry per count it states: "<n> attempt(s)" is n attempts and
+// "<n> retry" or "<n> retries" is n + 1, where n is digits or one of no, zero, one, two, three, four and
+// five. Other wording is not read, so a comment that states no such count passes whatever else it says.
+const COUNT_WORDS: Record<string, number> = { no: 0, zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5 };
+function attemptCounts(comment: string): number[] {
+  return [...comment.matchAll(/\b(\d+|no|zero|one|two|three|four|five) (attempts?|retry|retries)\b/gi)].map(([, count, noun]) => {
+    const n = COUNT_WORDS[count.toLowerCase()] ?? Number(count);
+    return /^retr/i.test(noun) ? n + 1 : n;
+  });
+}
+
+// The path binCommand's comment recounts: before binCommand, main() handed HMA_BIN=" " to runFixtures as
+// the command. Here each CLI's command is " " on a one-fixture root whose exercise names a program that
+// is not on PATH, so sh exits 127 on every leg.
+test("a white-space-only command read as set gets one attempt per leg, reported as could not start with exit 127, and binCommand's comment gives no other count", () => {
+  const dir = mkdtempSync(join(tmpdir(), "parity-cli-blank-"));
+  const fixture = join(dir, "fixtures", "stub");
+  mkdirSync(join(fixture, "expected"), { recursive: true });
+  const clis = ["hma", "opena2a", "ai-trust"];
+  writeFileSync(join(fixture, "contract.yaml"), [
+    "description: white-space-only command stub",
+    "kind: package-name",
+    "package: ghost",
+    "exercises:",
+    ...clis.map((cli) => `  ${cli}: "{BIN} parity-no-such-command-${process.pid} {PACKAGE} --json"`),
+    "participants:",
+    ...clis.map((cli) => `  - ${cli}`),
+    "must_match:",
+    "  - found",
+    "may_differ: []",
+    "",
+  ].join("\n"));
+  for (const cli of clis) writeFileSync(join(fixture, "expected", `${cli}.json`), JSON.stringify({ found: false }));
+  const logged: string[] = [];
+  const origError = console.error;
+  const origLog = console.log;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  let failed = 0;
+  try {
+    failed = runFixtures(["stub"], { hma: " ", opena2a: " ", "ai-trust": " " }, { fixtures: join(dir, "fixtures"), actual: join(dir, "actual") });
+  } finally {
+    console.error = origError;
+    console.log = origLog;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // one failed fixture, for which main() exits 1
+  assert.equal(failed, 1, logged.join("\n"));
+  for (const cli of clis) {
+    assert.equal(logged.filter((l) => l.startsWith(`[stub] ${cli} could not start (exit=127): `)).length, 1, logged.join("\n"));
+  }
+  // probeWithRetry prints "transient probe failure" before each retry, and no leg printed it: each made one attempt
+  assert.deepEqual(logged.filter((l) => /transient probe failure|probe still failing/.test(l)), []);
+  // the comment once gave this account of the path, which counts three
+  assert.deepEqual(attemptCounts("each leg failed its three attempts with exit 127"), [3]);
+  const lines = readFileSync(join(repoRoot, "src", "run-parity.ts"), "utf8").split("\n");
+  const declared = lines.findIndex((l) => l.startsWith("export function binCommand("));
+  assert.ok(declared > 0, "src/run-parity.ts does not declare binCommand");
+  let first = declared;
+  while (first > 0 && lines[first - 1].startsWith("//")) first--;
+  // the comment wraps across lines, so read it as one
+  const comment = lines.slice(first, declared).map((l) => l.replace(/^\/\/ ?/, "")).join(" ");
+  assert.deepEqual(attemptCounts(comment).filter((n) => n !== 1), [], comment);
 });
 
 test("driftModeOn reads 1 and the other common spellings as on, and unset, empty, 0, false, no and off as off", () => {
