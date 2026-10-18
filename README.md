@@ -27,7 +27,7 @@ opena2a-parity harness
 
 The harness checks that the three CLIs, given the same input, hold identical values on each fixture's contract-tracked fields: the keys its `contract.yaml` lists under `must_match`.
 
-It exits 0 when every fixture passes, 1 when any fails, and 2 when `HMA_BIN`, `OPENA2A_BIN` or `AI_TRUST_BIN` is unset or empty.
+It exits 0 when every fixture passes, 1 when any fails, and 2 when `HMA_BIN`, `OPENA2A_BIN` or `AI_TRUST_BIN` is unset or empty or when `fixtures/` holds no directory. A directory under `fixtures/` with no `contract.yaml` is run and fails with `[<name>] missing contract.yaml`. Started by any path, including through a symbolic link or from a directory whose name holds a space, the harness prints the `opena2a-parity harness` header first and never exits 0 without it.
 
 In CI, the workflow sets these env vars from freshly-built CLIs and calls the same script.
 

@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { fixtureNames } from "../src/run-parity.ts";
 
 // A comment that says a CLI's golden of a fixture omits a must-match key is read as the state of that
 // committed golden. Re-baselining the golden to carry the key does not touch the comment: after the
@@ -15,11 +16,12 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 export type CommittedFixture = { name: string; mustMatch: string[]; goldens: Record<string, Record<string, unknown>> };
 
-// Each fixture with a contract, its must-match keys, and the participant goldens that parse as a JSON object.
+// Each fixture the harness runs, its must-match keys, and the participant goldens that parse as a JSON
+// object. A fixture directory with no contract.yaml fails here, as it fails the harness, instead of being
+// passed over.
 function committedFixtures(): CommittedFixture[] {
   const root = join(repoRoot, "fixtures");
-  return readdirSync(root)
-    .filter((name) => existsSync(join(root, name, "contract.yaml")))
+  return fixtureNames(root)
     .map((name) => {
       const contract = parseYaml(readFileSync(join(root, name, "contract.yaml"), "utf8")) as { participants?: string[]; must_match?: string[] };
       const goldens: Record<string, Record<string, unknown>> = {};

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync, execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, rmSync, chmodSync, lstatSync, symlinkSync } from "node:fs";
+import { writeFileSync, readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, rmSync, chmodSync, lstatSync, symlinkSync, copyFileSync, realpathSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1357,19 +1357,140 @@ const UNREADABLE_FILES: {
   },
 ];
 
-test("fixtureNames lists each fixture with a contract.yaml, a symbolic link that dangles or loops included", () => {
-  // existsSync follows the link, so `npm run parity` left such a fixture out without a line and counted
-  // one fixture fewer in its summary; runFixture fails it as a contract.yaml it cannot read.
+test("fixtureNames lists a directory whose contract.yaml is a symbolic link that dangles or loops, and a symbolic link to a directory", () => {
+  // existsSync follows the link, so `npm run parity` left a fixture whose contract.yaml was such a link out
+  // without a line and counted one fixture fewer in its summary; runFixture fails it as a contract.yaml it
+  // cannot read. A symbolic link under fixtures/ is a fixture when it resolves to a directory.
   const dir = mkdtempSync(join(tmpdir(), "parity-names-"));
   try {
     for (const name of ["file", "dangling", "looping", "no-contract"]) mkdirSync(join(dir, name));
     writeFileSync(join(dir, "file", "contract.yaml"), stubContract());
     symlinkSync("missing.yaml", join(dir, "dangling", "contract.yaml"));
     symlinkSync("contract.yaml", join(dir, "looping", "contract.yaml"));
+    symlinkSync("file", join(dir, "linked"));
+    symlinkSync("loop", join(dir, "loop"));
     writeFileSync(join(dir, "README.md"), "not a fixture");
-    assert.deepEqual(fixtureNames(dir).sort(), ["dangling", "file", "looping"]);
+    assert.deepEqual(fixtureNames(dir).sort(), ["dangling", "file", "linked", "looping", "no-contract"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Calls body on a fixtures/ holding a fixture that passes (real, on a stub CLI that counts its runs in
+// counter), a directory with no contract.yaml (no-contract), one whose contract has another name
+// (typo-yml), one whose contract.yaml is a symbolic link to no file (dangling), and three entries that are
+// not directories: a symbolic link to nothing (broken), a plain file (README.md) and a hidden file
+// (.hidden). What the harness prints while body runs is collected in logged.
+function withMixedFixtures(
+  body: (t: { counter: string; bins: Record<"hma" | "opena2a" | "ai-trust", string>; dirs: { fixtures: string; actual: string }; logged: string[] }) => void,
+): void {
+  const dir = mkdtempSync(join(tmpdir(), "parity-mixed-"));
+  const counter = join(dir, "n");
+  const bin = join(dir, "stub.mjs");
+  writeFileSync(counter, "0");
+  writeFileSync(bin, `
+import { readFileSync, writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(counter)}, String(Number(readFileSync(${JSON.stringify(counter)}, "utf8")) + 1));
+console.log(JSON.stringify({ score: 7 }));
+`);
+  const fixtures = join(dir, "fixtures");
+  mkdirSync(join(fixtures, "real", "expected"), { recursive: true });
+  writeFileSync(join(fixtures, "real", "contract.yaml"), stubContract());
+  writeFileSync(join(fixtures, "real", "expected", "hma.json"), JSON.stringify({ score: 7 }));
+  for (const cli of ["opena2a", "ai-trust"]) writeFileSync(join(fixtures, "real", "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+  mkdirSync(join(fixtures, "no-contract", "input"), { recursive: true });
+  writeFileSync(join(fixtures, "no-contract", "input", ".gitkeep"), "");
+  mkdirSync(join(fixtures, "typo-yml"));
+  writeFileSync(join(fixtures, "typo-yml", "contract.yml"), stubContract());
+  mkdirSync(join(fixtures, "dangling"));
+  symlinkSync("missing.yaml", join(fixtures, "dangling", "contract.yaml"));
+  symlinkSync("nowhere", join(fixtures, "broken"));
+  writeFileSync(join(fixtures, "README.md"), "not a fixture");
+  writeFileSync(join(fixtures, ".hidden"), "");
+  const logged: string[] = [];
+  const origError = console.error;
+  const origLog = console.log;
+  console.error = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  console.log = (...args: unknown[]) => { logged.push(args.map(String).join(" ")); };
+  try {
+    body({ counter, bins: { hma: `node ${bin}`, opena2a: "unused", "ai-trust": "unused" }, dirs: { fixtures, actual: join(dir, "actual") }, logged });
+  } finally {
+    console.error = origError;
+    console.log = origLog;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("fixtureNames lists every directory under fixtures/, with or without a contract.yaml, and no other entry", () => {
+  // A fixture whose contract.yaml was deleted or renamed was left out of `npm run parity` without a line,
+  // and the summary counted one fixture fewer.
+  withMixedFixtures(({ dirs }) => {
+    assert.deepEqual(fixtureNames(dirs.fixtures).sort(), ["dangling", "no-contract", "real", "typo-yml"]);
+  });
+});
+
+test("runFixture fails a directory with no contract.yaml by name, before running a CLI, and names the entries that look like its contract", () => {
+  withMixedFixtures(({ counter, bins, dirs, logged }) => {
+    assert.equal(runFixture("no-contract", bins, dirs), 2, logged.join("\n"));
+    assert.deepEqual(logged, ["[no-contract] missing contract.yaml"]);
+    logged.length = 0;
+    assert.equal(runFixture("typo-yml", bins, dirs), 2, logged.join("\n"));
+    assert.deepEqual(logged, ["[typo-yml] missing contract.yaml (found contract.yml; the harness reads contract.yaml only)"]);
+    // every entry whose lower-cased name starts with "contract" is named, in the order the directory lists them
+    const many = join(dirs.fixtures, "typo-many");
+    mkdirSync(join(many, "input"), { recursive: true });
+    writeFileSync(join(many, "Contract.json"), "{}");
+    writeFileSync(join(many, "contract.yml.bak"), stubContract());
+    const found = readdirSync(many).filter((name) => name !== "input");
+    logged.length = 0;
+    assert.equal(runFixture("typo-many", bins, dirs), 2, logged.join("\n"));
+    assert.deepEqual(logged, [`[typo-many] missing contract.yaml (found ${found.join(", ")}; the harness reads contract.yaml only)`]);
+    assert.equal(readFileSync(counter, "utf8"), "0", "a fixture with no contract.yaml ran a CLI");
+  });
+});
+
+test("runFixtures counts each directory with no contract.yaml as a fixture that failed", () => {
+  withMixedFixtures(({ counter, bins, dirs, logged }) => {
+    assert.equal(runFixtures(fixtureNames(dirs.fixtures), bins, dirs), 3, logged.join("\n"));
+    assert.equal(readFileSync(counter, "utf8"), "1", "real ran its CLI");
+    for (const name of ["dangling", "no-contract", "typo-yml"]) {
+      assert.ok(logged.some((line) => line.startsWith(`[${name}] `)), `${name} is not named\n${logged.join("\n")}`);
+    }
+  });
+});
+
+test("npm run parity runs a directory with no contract.yaml, names it, counts it in the summary and exits 1", () => {
+  // A copy of the harness reads the fixtures/ beside its own src/, so it runs on a passing stub fixture and
+  // a directory with no contract.yaml. The root is realpath'd and its name holds no space, so the copy is
+  // started by the path node resolves it to.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "parity-run-")));
+  const modules = join(root, "node_modules");
+  try {
+    mkdirSync(join(root, "src"));
+    copyFileSync(join(repoRoot, "src", "run-parity.ts"), join(root, "src", "run-parity.ts"));
+    // so the copy's yaml import resolves
+    symlinkSync(join(repoRoot, "node_modules"), modules);
+    const bin = join(root, "stub.mjs");
+    writeFileSync(bin, "console.log(JSON.stringify({ score: 7 }));\n");
+    const passing = join(root, "fixtures", "passing");
+    mkdirSync(join(passing, "expected"), { recursive: true });
+    writeFileSync(join(passing, "contract.yaml"), stubContract());
+    writeFileSync(join(passing, "expected", "hma.json"), JSON.stringify({ score: 7 }));
+    for (const cli of ["opena2a", "ai-trust"]) writeFileSync(join(passing, "expected", `${cli}.skip`), `${cli} does not exercise this stub`);
+    mkdirSync(join(root, "fixtures", "no-contract", "input"), { recursive: true });
+    const stub = `node ${bin}`;
+    const r = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", join(root, "src", "run-parity.ts")], {
+      cwd: root,
+      env: { PATH: process.env.PATH, HMA_BIN: stub, OPENA2A_BIN: stub, AI_TRUST_BIN: stub, PARITY_PROBE_BACKOFF_MS: "1" },
+      encoding: "utf8",
+    });
+    const detail = `status ${r.status}\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`;
+    assert.match(r.stderr, /^\[no-contract\] missing contract\.yaml$/m, detail);
+    assert.ok(r.stdout.endsWith("\n2 fixture(s) run, 1 fixture failure(s)\n"), detail);
+    assert.equal(r.status, 1, detail);
+  } finally {
+    if (lstatSync(modules, { throwIfNoEntry: false })) unlinkSync(modules);
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

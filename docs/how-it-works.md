@@ -8,3 +8,4 @@ The three CLIs overlap: `opena2a` passes `scan` and `check` through to `hackmyag
 
 - Three CLIs that share packages, with this gate checking they agree on each fixture's contract-tracked fields. Merging them into a single CLI was the alternative considered; it is kept as the rollback.
 - The harness lives in its own public repository, not inside the `opena2a` monorepo and not inside a CLI. Each CLI keeps its own release cadence, and the CI of every CLI repository can check this one out.
+- The harness runs its gate only when it is the entry module, so the tests can import its functions. The check compares both paths resolved through symbolic links, with the URL decoded, because node resolves the entry's links into `import.meta.url` and percent-encodes it, while `process.argv[1]` keeps the path as typed.
