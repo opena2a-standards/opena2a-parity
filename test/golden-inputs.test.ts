@@ -17,13 +17,14 @@ import { checkoutSkipReason, gitEnv } from "./ignore-file.test.ts";
 // git status does not show those two files there. Here each such path is checked against the input on
 // disk and, in a git checkout of this repository, against the files git tracks under input/.
 //
-// A failed GIT-001 ("Missing .gitignore") names the file it did not find, so its path is checked the
-// other way round: the input must not hold it. The secure-empty-dir goldens carry one.
+// A failed GIT-001 ("Missing .gitignore") or DEP-001 ("No dependency lock file found") reports a file the
+// scan did not find, so the path it names is checked the other way round: the input must not hold it.
+// The secure-empty-dir goldens carry a failed GIT-001.
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const fixturesDir = join(repoRoot, "fixtures");
 
-const REPORTS_FILE_MISSING = new Set(["GIT-001"]);
+const REPORTS_FILE_MISSING = new Set(["GIT-001", "DEP-001"]);
 
 const FIX =
   "A golden describes the input committed beside it. Commit each input file it names, with placeholder values " +
@@ -32,7 +33,8 @@ const FIX =
 export type NamedPath = { path: string; absent: boolean };
 
 // The paths a golden names: the string `file` of each object in its findings and allFindings arrays, and
-// each string in that object's details.files. `absent` marks the file of a failed GIT-001.
+// each string in that object's details.files. `absent` marks the file of a failed check in
+// REPORTS_FILE_MISSING.
 export function namedPaths(golden: unknown): NamedPath[] {
   const named: NamedPath[] = [];
   if (golden === null || typeof golden !== "object") return named;
@@ -62,6 +64,26 @@ export function pathProblems(golden: string, where: string, named: NamedPath[], 
   return [...problems];
 }
 
+// Whether `path` names a file or directory inside the directory `input` that exists on disk.
+function onDisk(input: string): (path: string) => boolean {
+  return (path) => {
+    const rel = relative(input, join(input, path));
+    return rel !== "" && rel.split(sep)[0] !== ".." && existsSync(join(input, path));
+  };
+}
+
+// Whether `path` is a file git tracks under `dir`, a directory relative to the repository root, or a
+// directory under `dir` that holds one.
+function trackedUnder(dir: string): (path: string) => boolean {
+  const r = spawnSync("git", ["-C", repoRoot, "ls-files", "-z", "--", dir], { encoding: "utf8", env: gitEnv(process.env) });
+  assert.equal(r.status, 0, `git ls-files ${dir} failed: ${r.stderr}`);
+  const tracked = r.stdout
+    .split("\0")
+    .filter((p) => p.startsWith(`${dir}/`))
+    .map((p) => p.slice(dir.length + 1));
+  return (path) => path !== "" && tracked.some((t) => t === path || t.startsWith(`${path}/`));
+}
+
 type DirectoryFixture = { name: string; goldens: { golden: string; named: NamedPath[] }[] };
 
 // Each directory fixture with the paths named by each participant's golden. The harness reads a contract
@@ -88,11 +110,7 @@ test("every input path a directory fixture's golden names is in that fixture's i
     "expected at least one directory fixture whose golden names an input path",
   );
   const problems = fixtures.flatMap(({ name, goldens }) => {
-    const input = join(fixturesDir, name, "input");
-    const holds = (path: string) => {
-      const rel = relative(input, join(input, path));
-      return rel !== "" && rel.split(sep)[0] !== ".." && existsSync(join(input, path));
-    };
+    const holds = onDisk(join(fixturesDir, name, "input"));
     return goldens.flatMap(({ golden, named }) => pathProblems(golden, `fixtures/${name}/input/`, named, holds));
   });
   assert.deepEqual(problems, [], FIX);
@@ -101,13 +119,7 @@ test("every input path a directory fixture's golden names is in that fixture's i
 test("every input path a directory fixture's golden names is committed under that fixture's input/", { skip: checkoutSkipReason(repoRoot, process.env) }, () => {
   const problems = directoryFixtures().flatMap(({ name, goldens }) => {
     const dir = `fixtures/${name}/input`;
-    const r = spawnSync("git", ["-C", repoRoot, "ls-files", "-z", "--", dir], { encoding: "utf8", env: gitEnv(process.env) });
-    assert.equal(r.status, 0, `git ls-files ${dir} failed: ${r.stderr}`);
-    const tracked = r.stdout
-      .split("\0")
-      .filter((p) => p.startsWith(`${dir}/`))
-      .map((p) => p.slice(dir.length + 1));
-    const holds = (path: string) => path !== "" && tracked.some((t) => t === path || t.startsWith(`${path}/`));
+    const holds = trackedUnder(dir);
     return goldens.flatMap(({ golden, named }) => pathProblems(golden, `the files git tracks under ${dir}/`, named, holds));
   });
   assert.deepEqual(problems, [], FIX);
@@ -140,3 +152,61 @@ test("a golden's input paths are the file and details.files of its findings and 
     "g.json reports .gitignore missing, but it is in input/",
   ]);
 });
+
+test("a failed DEP-001's file must be absent, as a failed GIT-001's must, and a passed one's file must be present", () => {
+  const named = namedPaths({
+    findings: [{ checkId: "DEP-001", passed: false, file: "package-lock.json" }],
+    allFindings: [
+      { checkId: "DEP-001", passed: false, file: "package-lock.json" },
+      { checkId: "DEP-001", passed: true, file: "yarn.lock" },
+      { checkId: "DEP-004", passed: false, file: "package.json" },
+    ],
+  });
+  assert.deepEqual(named, [
+    { path: "package-lock.json", absent: true },
+    { path: "package-lock.json", absent: true },
+    { path: "yarn.lock", absent: false },
+    { path: "package.json", absent: false },
+  ]);
+  assert.deepEqual(pathProblems("g.json", "input/", named, (p) => p === "package.json"), ["g.json names yarn.lock, which is not in input/"]);
+  assert.deepEqual(pathProblems("g.json", "input/", named, (p) => p === "package.json" || p === "package-lock.json"), [
+    "g.json reports package-lock.json missing, but it is in input/",
+    "g.json names yarn.lock, which is not in input/",
+  ]);
+});
+
+const DIRTY_SKILL = "secure-dirty-skill";
+
+// The secure-dirty-skill hma golden with package-lock.json set as the file of each failed DEP-001, as in
+// the re-capture #126 describes. That fixture's input/ holds a package.json and no package-lock.json.
+function dirtySkillRecapture(): NamedPath[] {
+  const golden = JSON.parse(readFileSync(join(fixturesDir, DIRTY_SKILL, "expected", "hma.json"), "utf8"));
+  let failed = 0;
+  for (const key of ["findings", "allFindings"]) {
+    for (const entry of golden[key]) {
+      if (entry.checkId === "DEP-001" && entry.passed === false) {
+        entry.file = "package-lock.json";
+        failed++;
+      }
+    }
+  }
+  assert.ok(failed > 0, `expected a failed DEP-001 in fixtures/${DIRTY_SKILL}/expected/hma.json`);
+  return namedPaths(golden);
+}
+
+test("a secure-dirty-skill golden whose failed DEP-001 names the absent package-lock.json passes the check of its input/ on disk", () => {
+  const dir = `fixtures/${DIRTY_SKILL}/input`;
+  assert.deepEqual(pathProblems(`fixtures/${DIRTY_SKILL}/expected/hma.json`, `${dir}/`, dirtySkillRecapture(), onDisk(join(repoRoot, dir))), []);
+});
+
+test(
+  "a secure-dirty-skill golden whose failed DEP-001 names the absent package-lock.json passes the check of the files git tracks under its input/",
+  { skip: checkoutSkipReason(repoRoot, process.env) },
+  () => {
+    const dir = `fixtures/${DIRTY_SKILL}/input`;
+    assert.deepEqual(
+      pathProblems(`fixtures/${DIRTY_SKILL}/expected/hma.json`, `the files git tracks under ${dir}/`, dirtySkillRecapture(), trackedUnder(dir)),
+      [],
+    );
+  },
+);
