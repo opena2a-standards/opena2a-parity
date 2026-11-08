@@ -19,12 +19,14 @@ import { checkoutSkipReason, gitEnv } from "./ignore-file.test.ts";
 //
 // A failed GIT-001 ("Missing .gitignore") or DEP-001 ("No dependency lock file found") reports a file the
 // scan did not find, so the path it names is checked the other way round: the input must not hold it.
-// The secure-empty-dir goldens carry a failed GIT-001.
+// The file of a failed SANDBOX-001 ("Container Isolation") is read the same way, as the path its fix
+// creates. The secure-empty-dir goldens carry a failed GIT-001. That fixture's contract.yaml describes a
+// SANDBOX-001 with file Dockerfile in the hma allFindings, which the committed hma golden does not carry.
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const fixturesDir = join(repoRoot, "fixtures");
 
-const REPORTS_FILE_MISSING = new Set(["GIT-001", "DEP-001"]);
+const REPORTS_FILE_MISSING = new Set(["GIT-001", "DEP-001", "SANDBOX-001"]);
 
 const FIX =
   "A golden describes the input committed beside it. Commit each input file it names, with placeholder values " +
@@ -175,6 +177,28 @@ test("a failed DEP-001's file must be absent, as a failed GIT-001's must, and a 
   ]);
 });
 
+test("a failed SANDBOX-001's file must be absent, as a failed GIT-001's and DEP-001's must, and a passed one's file must be present", () => {
+  const named = namedPaths({
+    findings: [{ checkId: "SANDBOX-001", passed: false, file: "Dockerfile" }],
+    allFindings: [
+      { checkId: "SANDBOX-001", passed: false, file: "Dockerfile" },
+      { checkId: "SANDBOX-001", passed: true, file: "docker-compose.yml" },
+      { checkId: "SANDBOX-002", passed: false, file: "docker-compose.yaml" },
+    ],
+  });
+  assert.deepEqual(named, [
+    { path: "Dockerfile", absent: true },
+    { path: "Dockerfile", absent: true },
+    { path: "docker-compose.yml", absent: false },
+    { path: "docker-compose.yaml", absent: false },
+  ]);
+  assert.deepEqual(pathProblems("g.json", "input/", named, (p) => p === "docker-compose.yaml"), ["g.json names docker-compose.yml, which is not in input/"]);
+  assert.deepEqual(pathProblems("g.json", "input/", named, (p) => p === "docker-compose.yaml" || p === "Dockerfile"), [
+    "g.json reports Dockerfile missing, but it is in input/",
+    "g.json names docker-compose.yml, which is not in input/",
+  ]);
+});
+
 const DIRTY_SKILL = "secure-dirty-skill";
 
 // The secure-dirty-skill hma golden with package-lock.json set as the file of each failed DEP-001, as in
@@ -206,6 +230,33 @@ test(
     const dir = `fixtures/${DIRTY_SKILL}/input`;
     assert.deepEqual(
       pathProblems(`fixtures/${DIRTY_SKILL}/expected/hma.json`, `the files git tracks under ${dir}/`, dirtySkillRecapture(), trackedUnder(dir)),
+      [],
+    );
+  },
+);
+
+const EMPTY_DIR = "secure-empty-dir";
+
+// The secure-empty-dir hma golden with a failed SANDBOX-001 whose file is Dockerfile added to its
+// allFindings, as in the re-capture #128 describes. That fixture's input/ holds .gitkeep alone.
+function emptyDirRecapture(): NamedPath[] {
+  const golden = JSON.parse(readFileSync(join(fixturesDir, EMPTY_DIR, "expected", "hma.json"), "utf8"));
+  golden.allFindings.push({ checkId: "SANDBOX-001", name: "Container Isolation", severity: "medium", passed: false, file: "Dockerfile" });
+  return namedPaths(golden);
+}
+
+test("a secure-empty-dir golden whose failed SANDBOX-001 names the absent Dockerfile passes the check of its input/ on disk", () => {
+  const dir = `fixtures/${EMPTY_DIR}/input`;
+  assert.deepEqual(pathProblems(`fixtures/${EMPTY_DIR}/expected/hma.json`, `${dir}/`, emptyDirRecapture(), onDisk(join(repoRoot, dir))), []);
+});
+
+test(
+  "a secure-empty-dir golden whose failed SANDBOX-001 names the absent Dockerfile passes the check of the files git tracks under its input/",
+  { skip: checkoutSkipReason(repoRoot, process.env) },
+  () => {
+    const dir = `fixtures/${EMPTY_DIR}/input`;
+    assert.deepEqual(
+      pathProblems(`fixtures/${EMPTY_DIR}/expected/hma.json`, `the files git tracks under ${dir}/`, emptyDirRecapture(), trackedUnder(dir)),
       [],
     );
   },
