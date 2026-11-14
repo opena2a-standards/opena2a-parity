@@ -19,6 +19,12 @@
 - `may_differ` — list of `{ path, reason }` entries naming keys per-CLI variation is allowed on.
   The harness fails the fixture before running any CLI if an entry has no `reason`, or if its
   `path` is also listed under `must_match` (a key there is compared whatever `may_differ` says)
+- `paths` — optional, a mapping from a participant to `{ <must_match key>: <dotted path> }` entries
+  for a CLI that carries a key at another path: the comparison with that CLI's golden and the
+  comparison between CLIs read the key there and compare its value as they compare any `must_match`
+  value, a map that names a key not listed under `must_match` or a CLI not listed under
+  `participants` fails the fixture before any CLI runs, and a mapped path that CLI's golden does not
+  carry fails it too
 - `normalize` — rules applied to CLI output before diffing (timestamps, absolute paths, tmp dirs).
   A rule is `strip_key` with a `path`, or `replace_regex` with a `pattern` (a regular expression,
   where every `{FIXTURE_INPUT_DIR}` stands for the fixture's input directory, matched literally; a

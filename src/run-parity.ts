@@ -15,6 +15,10 @@ type CLI = "hma" | "opena2a" | "ai-trust";
 
 type FixtureKind = "directory" | "package-name";
 
+// One participant's entry in a contract's paths map: each must_match key it maps, to the dotted path at
+// which that participant carries the key.
+export type KeyPaths = Readonly<Record<string, string>>;
+
 type FixtureContract = {
   description: string;
   kind?: FixtureKind;
@@ -23,6 +27,8 @@ type FixtureContract = {
   participants: CLI[];
   must_match: string[];
   may_differ: { path: string; reason: string }[];
+  // Where a participant carries a must_match key when not at the key itself (pathsProblems).
+  paths?: Partial<Record<CLI, KeyPaths>>;
   normalize: { kind: "strip_key" | "replace_regex"; path?: string; pattern?: string; replacement?: string }[];
 };
 
@@ -332,6 +338,31 @@ function canonicalPath(path: string): string {
   return path.replace(/^\$\.?/, "").split(".").filter(Boolean).join(".");
 }
 
+// The dotted path a participant's paths entry maps a must_match key to, or undefined for a key it does not
+// map. A mapped key is matched as getPath reads it, so "$.verdict" and "verdict" name the same key.
+function mappedPath(key: string, keyPaths: KeyPaths | undefined): string | undefined {
+  if (keyPaths == null) return undefined;
+  const wanted = canonicalPath(key);
+  return Object.entries(keyPaths).find(([mapped]) => canonicalPath(mapped) === wanted)?.[1];
+}
+
+// Where a participant carries a must_match key: the mapped path, or the key itself. Every read of a
+// must_match key from a participant's output or golden goes through this to getPath, so a contract
+// without paths reads each key where it read it before.
+export function keyPath(key: string, keyPaths?: KeyPaths): string {
+  return mappedPath(key, keyPaths) ?? key;
+}
+
+// A key or a CLI as a report names it: with the mapped path a key was read at, when there is one.
+function withReadPath(name: string, path: string | undefined): string {
+  return path === undefined ? name : `${name} (read at ${path})`;
+}
+
+// A must_match key as a report names it for one participant.
+function readLabel(key: string, keyPaths: KeyPaths | undefined): string {
+  return withReadPath(key, mappedPath(key, keyPaths));
+}
+
 // A contract entry as a reader wrote it, for a load-time problem line. JSON.stringify throws on a
 // self-referencing YAML alias (such as &a [*a]), which stopped the run with a TypeError instead of
 // failing the fixture; util.inspect marks the cycle instead of following it.
@@ -388,6 +419,50 @@ export function mayDifferProblems(contract: Pick<FixtureContract, "must_match" |
       problems.push(`${name} is also listed under must_match, where it is still compared; list it under one of the two`);
     }
   });
+  return problems;
+}
+
+// paths says where a participant carries a must_match key when not at the key itself:
+// { <participant>: { <must_match key>: <dotted path> } }. Both comparisons, each CLI's output with its
+// golden and the CLIs with each other, read the key for that participant at the mapped path, and compare
+// its value as they compare any must_match value. An entry for a CLI that is not listed under
+// participants, or for a key that is not listed under must_match, is read by no comparison, so nothing
+// else notices it; nor a key mapped twice, once as "verdict" and once as "$.verdict". One line per
+// offending entry, naming the participant and the key; runFixture fails the fixture on any of them
+// before it runs a CLI.
+export function pathsProblems(contract: Pick<FixtureContract, "participants" | "must_match" | "paths">): string[] {
+  const paths: unknown = contract.paths ?? {};
+  if (paths === null || typeof paths !== "object" || Array.isArray(paths)) {
+    return ["paths is not a mapping from each participant to its { must_match key: dotted path } entries"];
+  }
+  const participants: unknown[] = Array.isArray(contract.participants) ? contract.participants : [];
+  // Key strings only, as mayDifferProblems reads them: mustMatchProblems names every other entry.
+  const mustMatch = new Set(
+    (Array.isArray(contract.must_match) ? contract.must_match : []).filter((key: unknown) => typeof key === "string").map(canonicalPath),
+  );
+  const problems: string[] = [];
+  for (const [cli, entry] of Object.entries(paths)) {
+    const name = `paths entry ${cli}`;
+    if (!participants.includes(cli)) {
+      problems.push(`${name} names a CLI that is not listed under participants, so no comparison reads it; list the CLI there or remove its entry`);
+    }
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      problems.push(`${name} is not a mapping from must_match keys to dotted paths: ${formatEntry(entry)}`);
+      continue;
+    }
+    const mappedAs = new Map<string, string>();
+    for (const [key, path] of Object.entries(entry)) {
+      const canonical = canonicalPath(key);
+      if (!mustMatch.has(canonical)) {
+        problems.push(`${name} maps ${key}, which is not listed under must_match, so no comparison reads it; map only must_match keys`);
+      }
+      if (path == null || (typeof path === "string" && path.trim() === "")) problems.push(`${name} maps ${key} to no dotted path`);
+      else if (typeof path !== "string") problems.push(`${name} maps ${key} to a value that is not a dotted path string: ${formatEntry(path)}`);
+      const earlier = mappedAs.get(canonical);
+      if (earlier === undefined) mappedAs.set(canonical, key);
+      else problems.push(`${name} maps ${key}, the key it already maps as ${earlier}; map each must_match key once`);
+    }
+  }
   return problems;
 }
 
@@ -761,10 +836,13 @@ function sortKeysReplacer() {
 // Without a golden every absent key counts, so the fall-through case #21 was written for (a scan
 // document where the golden carries found, trustLevel, verdict) is still a SHAPE failure. A golden
 // that omits every key leaves nothing here to be absent; runFixture reports that golden itself.
-export function absentMustMatchKeys(parsed: unknown, mustMatch: string[], golden?: unknown): string[] {
-  return mustMatch.filter(
-    (key) => getPath(parsed, key) === undefined && (golden === undefined || getPath(golden, key) !== undefined),
-  );
+// keyPaths is the participant's paths entry: a key it maps is looked for at the mapped path, in the
+// payload and the golden alike.
+export function absentMustMatchKeys(parsed: unknown, mustMatch: string[], golden?: unknown, keyPaths?: KeyPaths): string[] {
+  return mustMatch.filter((key) => {
+    const path = keyPath(key, keyPaths);
+    return getPath(parsed, path) === undefined && (golden === undefined || getPath(golden, path) !== undefined);
+  });
 }
 
 // One line per participant, naming every absent key. Distinct from [FAIL] (value drift) on purpose:
@@ -785,10 +863,11 @@ export function shapeFailureReport(label: string, exitCode: number, absent: stri
 // that as absence on both sides, and nothing equals nothing, so it was counted equal without being
 // compared. One golden carrying the key is enough: a participant whose golden omits it is held to that
 // omission by its own leg. With no golden yet there is nothing to resolve a key against, and each
-// missing golden is reported on its own.
-export function unresolvedMustMatchKeys(mustMatch: string[], goldens: unknown[]): string[] {
+// missing golden is reported on its own. goldenKeyPaths[i] is the paths entry of the participant whose
+// golden is goldens[i]: a key it maps resolves at the mapped path.
+export function unresolvedMustMatchKeys(mustMatch: string[], goldens: unknown[], goldenKeyPaths: (KeyPaths | undefined)[] = []): string[] {
   if (goldens.length === 0) return [];
-  return mustMatch.filter((key) => goldens.every((golden) => getPath(golden, key) === undefined));
+  return mustMatch.filter((key) => goldens.every((golden, i) => getPath(golden, keyPath(key, goldenKeyPaths[i])) === undefined));
 }
 
 export function unresolvedKeysReport(fixtureName: string, unresolved: string[]): string {
@@ -803,9 +882,30 @@ export function unresolvedKeysReport(fixtureName: string, unresolved: string[]):
 // is absence on both sides for that participant's leg, and one golden carrying a key keeps it out of
 // unresolvedMustMatchKeys. So a golden that omitted every key, beside one that carried them, left its
 // leg no field to compare, and the leg counted every key equal whatever the CLI printed: a number, an
-// empty object, null. A golden that is not an object carries no key either.
-export function goldensWithoutMustMatchKey(mustMatch: string[], legs: { cli: string; golden: unknown }[]): string[] {
-  return legs.filter((leg) => mustMatch.every((key) => getPath(leg.golden, key) === undefined)).map((leg) => leg.cli);
+// empty object, null. A golden that is not an object carries no key either. A leg's keyPaths is its
+// participant's paths entry: a key it maps is carried at the mapped path.
+export function goldensWithoutMustMatchKey(mustMatch: string[], legs: { cli: string; golden: unknown; keyPaths?: KeyPaths }[]): string[] {
+  return legs.filter((leg) => mustMatch.every((key) => getPath(leg.golden, keyPath(key, leg.keyPaths)) === undefined)).map((leg) => leg.cli);
+}
+
+// The keys a participant's paths entry maps to a path its golden does not carry. A key a golden omits is
+// that participant's recorded absence; a mapped key is one the contract says the participant carries
+// there. So a mapped path its golden does not carry, such as one misspelt, compared nothing on the leg
+// and left the participant out of the key's comparison between CLIs, and the fixture passed with the
+// map read by no comparison.
+export function mappedKeysNotInGolden(mustMatch: string[], golden: unknown, keyPaths?: KeyPaths): string[] {
+  return mustMatch.filter((key) => {
+    const path = mappedPath(key, keyPaths);
+    return path !== undefined && getPath(golden, path) === undefined;
+  });
+}
+
+export function mappedKeysReport(fixtureName: string, cli: string, labels: string[]): string {
+  return [
+    `[CONTRACT] ${fixtureName} × ${cli}: its golden carries nothing at ${labels.length} path(s) its paths entry maps a must-match key to: ${labels.join(", ")}`,
+    `  A paths entry says where ${cli} carries a key; a mapped path its golden does not carry compares nothing, so it fails the fixture`,
+    `  instead of counting as equal. Correct the path, or copy ${cli}'s verified capture over its golden (README.md "Re-baselining goldens").`,
+  ].join("\n");
 }
 
 export function keylessGoldenReport(fixtureName: string, cli: string, mustMatch: string[]): string {
@@ -817,13 +917,16 @@ export function keylessGoldenReport(fixtureName: string, cli: string, mustMatch:
   ].join("\n");
 }
 
-function diffKey(actual: unknown, golden: unknown, path: string): string | null {
+// keyPaths is the participant's paths entry: a key it maps is read at the mapped path on both sides, and
+// the block names that path beside the key.
+function diffKey(actual: unknown, golden: unknown, key: string, keyPaths?: KeyPaths): string | null {
+  const path = keyPath(key, keyPaths);
   const a = getPath(actual, path);
   const g = getPath(golden, path);
   const aj = canonicalJson(a);
   const gj = canonicalJson(g);
   if (aj === gj) return null;
-  return `  at ${path}:\n    expected: ${gj}\n    actual:   ${aj}`;
+  return `  at ${readLabel(key, keyPaths)}:\n    expected: ${gj}\n    actual:   ${aj}`;
 }
 
 // The verdict for an error payload the golden does not expect that outlasted every retry. The probe
@@ -851,20 +954,27 @@ export function unexpectedErrorReport(label: string, exitCode: number, actual: u
 //
 // A CLI whose golden omits a key is left out of that key's comparison: the omission is that CLI's
 // recorded absence, and its own leg holds its output to it. A leg that failed before its own
-// comparison has no `actual` and takes part with its golden.
-export function crossCliDiffs(mustMatch: string[], legs: { cli: string; golden: unknown; actual?: unknown }[]): string[] {
+// comparison has no `actual` and takes part with its golden. A leg's keyPaths is its participant's
+// paths entry: a key it maps is read at the mapped path in that CLI's golden and output, and the block
+// names that path beside the CLI.
+export function crossCliDiffs(mustMatch: string[], legs: { cli: string; golden: unknown; actual?: unknown; keyPaths?: KeyPaths }[]): string[] {
   const diffs: string[] = [];
   for (const key of mustMatch) {
-    const carriers = legs.filter((leg) => getPath(leg.golden, key) !== undefined);
+    const carriers = legs
+      .map((leg) => {
+        const mapped = mappedPath(key, leg.keyPaths);
+        return { leg, path: mapped ?? key, name: withReadPath(leg.cli, mapped) };
+      })
+      .filter(({ leg, path }) => getPath(leg.golden, path) !== undefined);
     if (carriers.length < 2) continue;
-    const width = Math.max(...carriers.map((leg) => leg.cli.length)) + 1;
+    const width = Math.max(...carriers.map(({ name }) => name.length)) + 1;
     const sides: string[] = [];
     for (const [title, side] of [["goldens", "golden"], ["outputs", "actual"]] as const) {
       const held = carriers
-        .filter((leg) => getPath(leg[side], key) !== undefined)
-        .map((leg) => ({ cli: leg.cli, value: canonicalJson(getPath(leg[side], key)) }));
+        .filter(({ leg, path }) => getPath(leg[side], path) !== undefined)
+        .map(({ leg, path, name }) => ({ name, value: canonicalJson(getPath(leg[side], path)) }));
       if (new Set(held.map((h) => h.value)).size < 2) continue;
-      sides.push(`    ${title}:`, ...held.map((h) => `      ${`${h.cli}:`.padEnd(width)} ${h.value}`));
+      sides.push(`    ${title}:`, ...held.map((h) => `      ${`${h.name}:`.padEnd(width)} ${h.value}`));
     }
     if (sides.length > 0) diffs.push([`  at ${key}:`, ...sides].join("\n"));
   }
@@ -1061,12 +1171,16 @@ export function runFixture(
     ...participantsProblems(contract),
     ...mustMatchProblems(contract),
     ...mayDifferProblems(contract),
+    ...pathsProblems(contract),
     ...normalizeProblems(contract, fixtureInputDir),
   ];
   if (contractProblems.length > 0) {
     for (const problem of contractProblems) console.error(`[${fixtureName}] contract.yaml ${problem}`);
     return 2;
   }
+  // Each participant's paths entry, which every read of a must_match key from its golden or output goes
+  // through; undefined for a participant the contract does not map, which reads each key at the key.
+  const keyPathsOf = (cli: string): KeyPaths | undefined => contract.paths?.[cli as CLI];
 
   const results: Record<string, ProbeResult> = {};
   let failures = 0;
@@ -1093,9 +1207,18 @@ export function runFixture(
 
   // The legs still run, so each capture is written, and compare only the keys a golden carries. A
   // golden that could not be read may carry a key, so its fixture is not checked for them.
-  const unresolved = unreadGoldens.size > 0 ? [] : unresolvedMustMatchKeys(contract.must_match, [...goldens.values()]);
+  const unresolved =
+    unreadGoldens.size > 0 ? [] : unresolvedMustMatchKeys(contract.must_match, [...goldens.values()], [...goldens.keys()].map(keyPathsOf));
   if (unresolved.length > 0) {
-    console.error(`\n${unresolvedKeysReport(fixtureName, unresolved)}`);
+    // A key a participant's paths entry maps is named with each mapped path it was looked for at.
+    const unresolvedLabels = unresolved.map((key) => {
+      const reads = contract.participants.flatMap((cli) => {
+        const path = mappedPath(key, keyPathsOf(cli));
+        return path === undefined ? [] : [`${cli} read at ${path}`];
+      });
+      return reads.length === 0 ? key : `${key} (${reads.join("; ")})`;
+    });
+    console.error(`\n${unresolvedKeysReport(fixtureName, unresolvedLabels)}`);
     failures += unresolved.length;
   }
   const mustMatch = contract.must_match.filter((key) => !unresolved.includes(key));
@@ -1104,10 +1227,23 @@ export function runFixture(
   // so its capture is written and an output that carries a key the golden omits is still reported.
   // Where every key is in no golden, the report above already covers each participant.
   const keyless =
-    mustMatch.length > 0 ? goldensWithoutMustMatchKey(contract.must_match, [...goldens].map(([cli, golden]) => ({ cli, golden }))) : [];
+    mustMatch.length > 0
+      ? goldensWithoutMustMatchKey(contract.must_match, [...goldens].map(([cli, golden]) => ({ cli, golden, keyPaths: keyPathsOf(cli) })))
+      : [];
   for (const cli of keyless) {
-    console.error(`\n${keylessGoldenReport(fixtureName, cli, contract.must_match)}`);
+    console.error(`\n${keylessGoldenReport(fixtureName, cli, contract.must_match.map((key) => readLabel(key, keyPathsOf(cli))))}`);
     failures++;
+  }
+
+  // A participant whose golden does not carry a path its paths entry maps a key to fails the fixture here,
+  // and its leg still runs, so its capture is written. A key in no golden and a golden that carries no
+  // key are reported above instead.
+  for (const [cli, golden] of goldens) {
+    if (keyless.includes(cli)) continue;
+    const notCarried = mappedKeysNotInGolden(mustMatch, golden, keyPathsOf(cli));
+    if (notCarried.length === 0) continue;
+    console.error(`\n${mappedKeysReport(fixtureName, cli, notCarried.map((key) => readLabel(key, keyPathsOf(cli))))}`);
+    failures += notCarried.length;
   }
 
   for (const cli of contract.participants) {
@@ -1173,10 +1309,11 @@ export function runFixture(
         continue;
       }
 
-      const absent = absentMustMatchKeys(parsedVal, mustMatch, shapeGolden);
+      const absent = absentMustMatchKeys(parsedVal, mustMatch, shapeGolden, keyPathsOf(cli));
       if (absent.length > 0) {
         const errorField = isTransientProbeFailure(parsedVal, shapeGolden) ? (parsedVal as { error?: unknown }).error : undefined;
-        console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absent, mustMatch.length, errorField)}`);
+        const absentLabels = absent.map((key) => readLabel(key, keyPathsOf(cli)));
+        console.error(`\n${shapeFailureReport(`${fixtureName} × ${cli}`, exitCode, absentLabels, mustMatch.length, errorField)}`);
         console.error(`  (actual captured at ${join("actual", fixtureName, `${cli}.json`)})`);
         failures += absent.length;
         continue; // no golden comparison for a document of the wrong shape; the keys are named above
@@ -1201,7 +1338,7 @@ export function runFixture(
     }
   }
 
-  const legs: { cli: CLI; golden: unknown; actual?: unknown }[] = [];
+  const legs: { cli: CLI; golden: unknown; actual?: unknown; keyPaths?: KeyPaths }[] = [];
   for (const cli of contract.participants) {
     const goldenPath = join(expectedDir, `${cli}.json`);
     if (!hasEntry(goldenPath)) {
@@ -1212,15 +1349,16 @@ export function runFixture(
     if (unreadGoldens.has(cli)) continue; // its leg has already failed on it
     const golden = goldens.get(cli);
     const actual = results[cli]?.parsed;
+    const keyPaths = keyPathsOf(cli);
     if (actual === undefined) {
-      legs.push({ cli, golden });
+      legs.push({ cli, golden, keyPaths });
       continue;
     }
 
     const diffs: string[] = [];
     try {
       for (const key of mustMatch) {
-        const d = diffKey(actual, golden, key);
+        const d = diffKey(actual, golden, key, keyPaths);
         if (d) diffs.push(d);
       }
     } catch (err) {
@@ -1229,7 +1367,7 @@ export function runFixture(
       failures++;
       continue;
     }
-    legs.push({ cli, golden, actual });
+    legs.push({ cli, golden, actual, keyPaths });
     if (diffs.length > 0) {
       console.error(`\n[FAIL] ${fixtureName} × ${cli}: ${diffs.length} must-match field(s) drifted`);
       for (const d of diffs) console.error(d);
