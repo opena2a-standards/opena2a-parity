@@ -2,8 +2,8 @@ description: >
   Behavioral-governance parity on the canonical hardened SOUL.md fixture
   scored under HMA 0.23.6's scope-aware clamping. HMA's scan-soul and
   opena2a-cli's scan-soul must agree byte-identically on the verdict
-  shape: same score (74, clamped from 100), same grade ("B"), same level
-  ("standard"), same agentProfile + agentTier classifier output. The
+  shape: same score (74, clamped from 100), same level ("standard"), same
+  agentProfile + agentTier classifier output. The
   fixture's `<!-- soul:profile=conversational -->` marker conflicts with
   the body's TOOL-USING content; both CLIs detect the mismatch, skip the
   five trust/capability/data/agentic/oversight domains, and clamp the
@@ -27,18 +27,19 @@ participants:
   - hma
   - opena2a
 
-# Headline verdict fields. score + grade + level are the load-bearing claims
-# (the contract is "both CLIs report the same clamped 74/B/standard verdict
-# under HMA 0.23.6's scope-aware clamp"). agentProfile + agentTier lock the
+# Headline verdict fields. score + level are the load-bearing claims (the
+# contract is "both CLIs report the same clamped 74/standard verdict under
+# HMA 0.23.6's scope-aware clamp"). agentProfile + agentTier lock the
 # upstream classifier so a classification regression fires the gate too.
 must_match:
   - score
-  - grade
   - level
   - agentProfile
   - agentTier
 
 may_differ:
+  - path: grade
+    reason: "Letter grade, which opena2a's scan-soul --json stops emitting; its golden omits it while hma's still carries it. Not compared, so opena2a passes before and after that change lands; score and level still carry the verdict."
   - path: file
     reason: "Just the local filename string ('SOUL.md'); stable for this fixture but ecosystem-noise we don't care about gating."
   - path: fileSize

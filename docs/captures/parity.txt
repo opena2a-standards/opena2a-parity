@@ -16,8 +16,8 @@ opena2a-parity harness
 [OK]   check-registered-ai-pypi × ai-trust: 5 must-match fields equal apart from object key order
 [OK]   check-registered-ai-pypi × opena2a: 5 must-match fields equal apart from object key order
 [OK]   check-registered-ai-pypi: hma, ai-trust, opena2a agree on every must-match field their goldens carry
-[OK]   scan-soul-hardened × hma: 5 must-match fields equal apart from object key order
-[OK]   scan-soul-hardened × opena2a: 5 must-match fields equal apart from object key order
+[OK]   scan-soul-hardened × hma: 4 must-match fields equal apart from object key order
+[OK]   scan-soul-hardened × opena2a: 4 must-match fields equal apart from object key order
 [OK]   scan-soul-hardened: hma, opena2a agree on every must-match field their goldens carry
 [SKIP] scan-soul-hardened × ai-trust: ai-trust does not have a scan-soul command. Behavioral-governance scanning is HMA/opena2a-only. Skipping for the established 2-way pattern (see secure-dirty-skill, secure-empty-dir).
 [OK]   secure-dirty-skill × hma: 4 must-match fields equal apart from object key order
